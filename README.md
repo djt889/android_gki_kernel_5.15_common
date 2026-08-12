@@ -34,13 +34,13 @@
 | **vmscan should_be_protected hook** | `mm/vmscan.c` | R5 | hook 签名升级，支持动态优先级阈值 |
 | **gki_defconfig 配置开关** | `arch/arm64/configs/gki_defconfig` | 各版 | 启用上述特性的 CONFIG 开关 |
 
-## 三、关于 DDR 校验移除的说明
+## 三、DDR（DRM）校验移除 — 已确认
 
-> ⚠️ **DDR 校验移除未在本仓库 git 历史中检出**。经查：
-> - JiuXia R1-R6 提交（`43f7d63d..ceb3129e`）中**无 DDR 校验相关改动**
-> - hfdem 基线文档（`cfcf7776`）也未列 DDR 校验条目
-> - 若 DDR 校验去除存在，可能在刷机包/设备树层面，或独立于本内核源码
-> **需确认来源后再补充到本整理。**
+> 用户所指 "DDR 校验移除"实际是 **DRM encoder clone 校验移除**（drm 与 ddr 拼写相近）。
+> - **文件**：drivers/gpu/drm/drm_atomic_helper.c
+> - **版本**：R1（c99f25ab5f0a）
+> - **内容**：移除 drm_atomic_check_valid_clones() 函数（26 行）
+> - **效果**：不移除会导致校验失败（encoder_mask 与 possible_clones 不匹配返回 -EINVAL）→ atomic commit 失败 → **黑屏但系统可点击**；移除后显示正常
 
 ## 四、更新方法（每次正式分支修改后）
 
