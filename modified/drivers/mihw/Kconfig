@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# Xiaomi MI hardware/power helpers (built-in port)
+#
+
+config MI_UNION_POWER
+	bool "MI UnionPower core: frame load / jank monitor"
+	default y
+	help
+	  Port of Xiaomi's unionpower frame load and jank monitoring engine.
+	  Receives frame queue/vsync events from the compositor via
+	  /proc/unionpower/ioctl, tracks per-process frame intervals and flags
+	  jank. Exposes /sys/.../unionpower/frame_jank. Requires the
+	  SurfaceFlinger/compositor side to report frame events to be useful;
+	  without reporting it is inert.
