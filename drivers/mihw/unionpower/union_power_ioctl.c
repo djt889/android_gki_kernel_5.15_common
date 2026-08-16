@@ -56,7 +56,9 @@ static long device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     return ret;
 }
 static const struct proc_ops FOPS = {
+#ifdef CONFIG_COMPAT
     .proc_compat_ioctl = device_ioctl,
+#endif
     .proc_ioctl = device_ioctl,
     .proc_open = device_open,
     .proc_read = seq_read,
