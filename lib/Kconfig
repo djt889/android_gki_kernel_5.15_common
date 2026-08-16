@@ -348,6 +348,18 @@ config ZSTD_COMPRESS
 config ZSTD_DECOMPRESS
 	select ZSTD_COMMON
 	tristate
+config ZSTDH_COMMON
+	select XXHASH
+	tristate
+
+config ZSTDH_COMPRESS
+	select ZSTDH_COMMON
+	tristate
+
+config ZSTDH_DECOMPRESS
+	select ZSTDH_COMMON
+	tristate
+
 
 source "lib/xz/Kconfig"
 

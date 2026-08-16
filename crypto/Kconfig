@@ -1836,6 +1836,14 @@ config CRYPTO_ZSTD
 	select ZSTD_DECOMPRESS
 	help
 	  This is the zstd algorithm.
+config CRYPTO_ZSTDH
+	tristate "Zstdh compression algorithm"
+	select CRYPTO_ALGAPI
+	select CRYPTO_ACOMP2
+	select ZSTDH_COMPRESS
+	select ZSTDH_DECOMPRESS
+	help
+	  This is the zstdh algorithm.
 
 comment "Random Number Generation"
 
