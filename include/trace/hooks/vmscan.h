@@ -92,6 +92,9 @@ DECLARE_HOOK(android_vh_evict_pages_bypass,
 DECLARE_HOOK(android_vh_mglru_should_abort_scan,
 	TP_PROTO(unsigned long *nr_reclaimed),
 	TP_ARGS(nr_reclaimed));
+DECLARE_HOOK(android_vh_throttle_direct_reclaim_bypass,
+	TP_PROTO(bool *bypass),
+	TP_ARGS(bypass));
 #endif /* _TRACE_HOOK_VMSCAN_H */
 /* This part must be outside protection */
 #include <trace/define_trace.h>

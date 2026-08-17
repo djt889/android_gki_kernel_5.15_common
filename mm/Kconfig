@@ -986,6 +986,14 @@ config KSHRINK_LRUVECD
 	help
 	  Defer rmap-lock-contended pages to an asynchronous reclaim worker.
 
+config SEW_MMAP_BYPASS
+	bool "Sew mmap direct-reclaim throttle bypass"
+	depends on ANDROID_VENDOR_HOOKS
+	default y
+	help
+	  Bypass direct-reclaim throttling for userspace tasks to reduce
+	  mmap allocation latency under memory pressure (Sew R7).
+
 config MI_RMAP_EFFICIENCY
 	bool "MI rmap efficiency: protect high-mapcount pages"
 	default y

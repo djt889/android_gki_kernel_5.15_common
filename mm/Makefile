@@ -134,3 +134,4 @@ obj-$(CONFIG_HAVE_BOOTMEM_INFO_NODE) += bootmem_info.o
 obj-$(CONFIG_GENERIC_IOREMAP) += ioremap.o
 obj-$(CONFIG_KSHRINK_LRUVECD) += kshrink_lruvecd.o
 obj-$(CONFIG_MI_RMAP_EFFICIENCY) += mi_rmap_efficiency.o
+obj-$(CONFIG_SEW_MMAP_BYPASS) += sew_mmap_bypass.o
