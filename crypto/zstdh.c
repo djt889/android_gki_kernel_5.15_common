@@ -186,10 +186,14 @@ static int __zstd_compress(const u8 *src, unsigned int slen,
 
 	/*
 	 * zstdh: reuse the hash table across pages for the comp interface
-	 * (used by zram's per-CPU streams, each CPU has its own tfm/cctx),
-	 * which speeds up compression (~26%) with the same ratio.
-	 * The scomp interface keeps a full reset because its ctx may be
-	 * shared between callers, so reusing the hash would race.
+	 * (used by zram's per-CPU streams, each CPU has its own tfm/cctx).
+	 * The first call does a full init (zstdh_compress_cctx sets all params
+	 * and the hash table); subsequent calls go through
+	 * zstdh_compress_cctx_reuse(), which now maps to ZSTDH_compress2()
+	 * (reset_session_only + stable buffers + dstSizeTooSmall check), keeping
+	 * the hash warm while fixing the broken output of the old reuse path.
+	 * The scomp interface keeps a full reset because its ctx may be shared
+	 * between callers, so reusing the hash would race.
 	 */
 	if (reuse && !zctx->first_compress) {
 		out_len = zstdh_compress_cctx_reuse(zctx->cctx, dst, *dlen,
