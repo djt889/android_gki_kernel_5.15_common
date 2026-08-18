@@ -135,3 +135,4 @@ obj-$(CONFIG_GENERIC_IOREMAP) += ioremap.o
 obj-$(CONFIG_KSHRINK_LRUVECD) += kshrink_lruvecd.o
 obj-$(CONFIG_MI_RMAP_EFFICIENCY) += mi_rmap_efficiency.o
 obj-$(CONFIG_SEW_MMAP_BYPASS) += sew_mmap_bypass.o
+obj-$(CONFIG_SEW_ALLOC_ADJUST) += sew_alloc_adjust.o

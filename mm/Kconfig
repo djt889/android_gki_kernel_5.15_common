@@ -1004,4 +1004,13 @@ config MI_RMAP_EFFICIENCY
 	  reclaim, protecting multi-process-shared pages (GPU/display buffers)
 	  from being recycled. Faithful port of Xiaomi's mi_rmap_efficiency.
 
+config SEW_ALLOC_ADJUST
+	bool "Sew high-order DMA-IOMMU alloc flags adjustment"
+	default y
+	depends on ANDROID_VENDOR_HOOKS
+	help
+	  Drop __GFP_RECLAIM for high-order (order > PAGE_ALLOC_COSTLY_ORDER)
+	  DMA-IOMMU and kvmalloc allocations to reduce reclaim-induced jank
+	  under memory pressure (Sew R7).
+
 endmenu

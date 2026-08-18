@@ -123,7 +123,7 @@ config F2FS_FS_LZ4
 config F2FS_FS_LZ4HC
 	bool "LZ4HC compression support"
 	depends on F2FS_FS_LZ4
-	default y
+	default n
 	help
 	  Support LZ4HC compress algorithm, LZ4HC has compatible on-disk
 	  layout with LZ4, if unsure, say Y.
