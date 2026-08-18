@@ -1836,15 +1836,6 @@ config CRYPTO_ZSTD
 	select ZSTD_DECOMPRESS
 	help
 	  This is the zstd algorithm.
-config CRYPTO_LZ4JO
-	tristate "LZ4JO compression algorithm"
-	select CRYPTO_ALGAPI
-	select CRYPTO_ACOMP2
-	select LZ4JO_COMPRESS
-	select LZ4JO_DECOMPRESS
-	help
-	  This is the lz4jo algorithm (JiuXia optimized LZ4).
-
 config CRYPTO_ZSTDH
 	tristate "Zstdh compression algorithm"
 	select CRYPTO_ALGAPI

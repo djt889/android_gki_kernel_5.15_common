@@ -348,12 +348,6 @@ config ZSTD_COMPRESS
 config ZSTD_DECOMPRESS
 	select ZSTD_COMMON
 	tristate
-config LZ4JO_COMPRESS
-	tristate
-
-config LZ4JO_DECOMPRESS
-	tristate
-
 config ZSTDH_COMMON
 	select XXHASH
 	tristate
