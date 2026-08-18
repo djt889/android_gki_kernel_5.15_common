@@ -18,7 +18,10 @@
         ├── 06-xiaomi-mi_rmap/
         ├── 07-xiaomi-unionpower/
         ├── 08-builtin-ipset_bbr/
-        └── 09-base-fixes/
+        ├── 09-base-fixes/
+        ├── 10-zstdh/
+        ├── 11-sew_mmap_bypass/
+        └── 12-sew_alloc_adjust/
 
 ## 特性总览
 
