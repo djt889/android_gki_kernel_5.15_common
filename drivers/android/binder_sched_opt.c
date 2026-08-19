@@ -31,10 +31,10 @@
 
 /* Original module's worker-name table (strncmp prefix). */
 static const char * const binder_sched_opt_workers[] = {
-	"RenderThread", ".globallauncher", "com.miui.home", "system_server",
+	".globallauncher", "com.miui.home", "system_server",
 	"personalassistant", "ll.splashscreen", "cameraserver", "passBlur",
 	"wmshell.main", "android.systemui", "android.calendar", "android.anim",
-	"C3Dev-", "-ReqQ", "main",
+	"C3Dev-", "-ReqQ",
 };
 
 static bool binder_sched_opt_match(const char *comm)
@@ -142,6 +142,14 @@ static void binder_sched_opt_transaction_finish(void *unused,
 	if (!proc || !transaction || !binder_thread_task || sync)
 		return;
 	if (!pending_async)
+		return;
+	/*
+	 * Guard with the same SurfaceFlinger-target check as set_priority.
+	 * Without it, any process whose thread comm happens to match the
+	 * worker list (e.g. the generic "main"/"RenderThread") would be
+	 * RT-ified on pending_async finish, breaking app thread init.
+	 */
+	if (!binder_sched_opt_is_sf(transaction->to_proc))
 		return;
 	if (!binder_sched_opt_match(binder_thread_task->comm))
 		return;
