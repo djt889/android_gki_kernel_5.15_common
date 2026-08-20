@@ -264,16 +264,16 @@ source "security/safesetid/Kconfig"
 source "security/lockdown/Kconfig"
 source "security/landlock/Kconfig"
 
-config R3_AUDIT_LSM
-	bool "R3 module read audit LSM"
+config SEW_AUDIT_LSM
+	bool "Sew module load audit LSM"
 	depends on SECURITY
 	default y
 	help
-	  Record module file reads (kernel_read_file, READING_MODULE) for
-	  diagnostics. Since R4, block loading of the binder_prio module by
-	  exact file name (binder_prio.ko). finit_module() covers the
-	  Android init modules.load path; the older init_module() memory
-	  path is intentionally not intercepted.
+	  Block loading of kernel modules that duplicate functionality built
+	  into the Sew kernel (binder_prio, moon_*, kshrink_* prefixes), from
+	  system partitions only. finit_module() covers the Android init
+	  modules.load path; the older init_module() memory path is not
+	  intercepted.
 
 source "security/integrity/Kconfig"
 
