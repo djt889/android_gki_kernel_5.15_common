@@ -40,9 +40,10 @@
 - 关闭 F2FS lz4hc（`/data` 分区未用压缩，lz4hc 变体无意义，lz4 保留）
 
 ## 来源说明
+- **参考社区方案**：binder_sched_opt（借鉴社区 Binder 调度思路，独立实现类似优化）
 - **小米 MiCode piano 移植**：kshrink_slabd、mi_rmap、unionpower
 - **OnePlus kswapd_opt 移植**：sew_alloc_adjust（alloc_adjust_flags + kvmalloc_adjust_flags）
-- **Sew 自研**：zstdh 压缩算法、sew_audit LSM、binder_sched_opt
+- **Sew 自研**：zstdh 压缩算法、sew_audit LSM
 - **原生改造**：mi_sw_sync
 - 详细分类见 `kernel-customizations-docs` 分支
 
