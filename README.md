@@ -4,7 +4,7 @@
 
 - 基线分支：`android13-5.15-lts-2026-07`
 - 上游：Android Common Kernel `android13-5.15-lts`
-- 当前版本：Linux 5.15.211（Android 13 GKI）· **R7**
+- 当前版本：Linux 5.15.211（Android 13 GKI）· **R7.2**
 - 构建：LLVM=1（Clang），ThinLTO
 
 ## 修改与移植特性
@@ -25,7 +25,7 @@
 - **binder_sched_opt** — binder UI 调度优化（SurfaceFlinger / com.miui.home FIFO/RT 优先级）
 - **kshrink_slabd** — 异步 slab 回收
 - **kshrink_lruvecd** — 异步 lruvec 回收（15 项重构，按 THP 页数硬上限）
-- **r3_audit LSM** — binder_prio 模块加载阻断 + 审计
+- **sew_audit LSM** — 模块加载阻断（前缀匹配 binder_prio/moon_/kshrink_，避免与内建功能重复注册 hook）
 - **mi_rmap_efficiency** — 高 mapcount 页保护
 - **unionpower** — 帧卡顿检测引擎
 - **ipset** — netfilter 集合框架
@@ -43,7 +43,7 @@
 - **酷安优化**：binder_sched_opt（Moon Binder）
 - **小米 MiCode piano 移植**：kshrink_slabd、mi_rmap、unionpower
 - **OnePlus kswapd_opt 移植**：sew_alloc_adjust（alloc_adjust_flags + kvmalloc_adjust_flags）
-- **Sew 自研**：zstdh 压缩算法、r3_audit LSM
+- **Sew 自研**：zstdh 压缩算法、sew_audit LSM
 - **原生改造**：mi_sw_sync
 - 详细分类见 `kernel-customizations-docs` 分支
 
