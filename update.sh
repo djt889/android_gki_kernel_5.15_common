@@ -1,34 +1,59 @@
 #!/bin/bash
-# JiuXia Kernel Customizations - 更新脚本
-# 用法: bash ./update.sh <新版本标签>   (在 kernel-customizations-docs 分支执行)
-# 功能: 从正式分支提取最新修改文件到 features/, 提交并推送
-# 注意: 拉取谷歌上游(android.googlesource.com)不在本脚本内, 单独执行 git fetch google
+# Sew Kernel Customizations - 文档分支同步脚本（v2，2026-08-22 重写修复空壳问题）
+# 用法: bash ./update.sh <正式分支tag或分支名>   （在任意分支执行，脚本自动切换）
+# 功能: 按映射表从正式分支提取最新文件到 docs 分支 features/，提交并推送，最后回到正式分支
 set -e
-VERSION="R7"
-FORMAL=android13-5.15-lts-2026-07
-BASE=43f7d63d83ca
+REF="${1:?用法: bash ./update.sh <tag或分支>}"
 KERNEL=/root/work/android_gki_kernel_5.15_common
+FORMAL=android13-5.15-lts-2026-07
+DOCS=kernel-customizations-docs
+BASE=43f7d63d83ca
 
-# 1. 从正式分支提取修改文件
-cd 
-git checkout 
-FILES=
-echo "修改文件数: 1"
+# feature 目录 -> 正式分支文件 映射表（新增 feature 时在此登记）
+MAPPING=(
+  "01-mi_sw_sync:drivers/dma-buf/sw_sync.c drivers/dma-buf/sync_debug.c drivers/dma-buf/sync_debug.h drivers/dma-buf/Kconfig"
+  "02-coolapk-binder_sched_opt:drivers/android/binder_sched_opt.c drivers/android/Kconfig drivers/android/Makefile"
+  "03-xiaomi-kshrink_slabd:mm/slabd.c mm/slabd.h mm/Kconfig mm/Makefile"
+  "04-kshrink_lruvecd:mm/kshrink_lruvecd.c include/linux/kshrink_lruvecd.h mm/page_ext.c"
+  "05-jiuxia-sew_audit_lsm:security/sew_audit_lsm.c security/Kconfig security/Makefile"
+  "06-xiaomi-mi_rmap:mm/mi_rmap_efficiency.c mm/vmscan.c include/trace/hooks/mm.h"
+  "07-xiaomi-unionpower:drivers/mihw/ drivers/Kconfig drivers/Makefile"
+  "08-builtin-ipset_bbr:arch/arm64/configs/jiuxia_r6.fragment"
+  "09-base-fixes:arch/arm64/configs/gki_defconfig drivers/gpu/drm/drm_atomic_helper.c lib/lz4/lz4hc.c Makefile"
+  "10-zstdh:crypto/zstdh.c lib/zstdh/ include/linux/zstdh.h include/linux/zstdh_errors.h include/linux/zstdh_lib.h crypto/Kconfig"
+  "11-sew_mmap_bypass:mm/sew_mmap_bypass.c include/trace/hooks/vmscan.h"
+  "12-sew_alloc_adjust:mm/sew_alloc_adjust.c"
+)
 
-# 2. 回到文档分支
-git checkout kernel-customizations-docs
+cd "$KERNEL"
+git status --short | grep . && { echo "工作区不干净，中止"; exit 1; }
 
-# 3. 清空 features 并按原路径重新提取（保持 modified 兼容）
-rm -rf features
-mkdir -p features
-for f in ; do
-    mkdir -p "features/"
-    git show : > "features/"
+# trap 保证任何失败都回到正式分支
+trap 'git checkout "$FORMAL" >/dev/null 2>&1 || true' EXIT
+git checkout -q "$DOCS"
+
+updated=0
+for entry in "${MAPPING[@]}"; do
+    dir="features/${entry%%:*}"
+    files="${entry#*:}"
+    for f in $files; do
+        for src in $(git diff --name-only "$BASE".."$REF" -- "$f"); do
+            mkdir -p "$dir/$(dirname "$src")"
+            git show "$REF:$src" > "$dir/$src"
+            echo "[sync] $src -> $dir/"
+            updated=$((updated+1))
+        done
+    done
 done
-echo "已提取到 features/"
 
-# 4. 提交并推送
-git add -A
-git commit -m "update : 1 modified files" || echo "(无新改动)"
-git push origin kernel-customizations-docs
-echo "完成: kernel-customizations-docs 已更新"
+if [ "$updated" -gt 0 ]; then
+    git add features
+    git commit -q -m "docs: sync from $REF ($updated files)" || echo "(无新改动)"
+    git push origin "$DOCS"
+    echo "完成: 已同步 $updated 个文件并推送"
+else
+    echo "无需要同步的文件"
+fi
+
+git checkout -q "$FORMAL"
+echo "已回到正式分支 $FORMAL"
