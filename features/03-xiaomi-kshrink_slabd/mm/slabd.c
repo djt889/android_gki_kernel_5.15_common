@@ -67,6 +67,13 @@ static bool kshrink_slabd_enabled;
 static bool kshrink_slabd_affinity_done;
 static unsigned long kshrink_slabd_queued;
 static unsigned long kshrink_slabd_completed;
+/*
+ * Throttle timestamp, seeded with jiffies at init: jiffies starts at
+ * INITIAL_JIFFIES on arm64, so a zero seed makes the first difference huge
+ * and defers the very first slab shrink of the boot to the worker, exactly
+ * when it should still run synchronously.
+ */
+static unsigned long kshrink_slabd_prev_jiffies;
 
 extern unsigned long shrink_slab(gfp_t gfp_mask, int nid,
 				 struct mem_cgroup *memcg, int priority);
@@ -211,8 +218,7 @@ static void kshrink_slabd_bypass(void *data, gfp_t gfp_mask, int nid,
 				 struct mem_cgroup *memcg, int priority,
 				 bool *bypass)
 {
-	static unsigned long prev_jiffies;
-	unsigned long curr_jiffies, diff_jiffies;
+	unsigned long prev, curr;
 
 	if (!current_is_kswapd() &&
 	    current != READ_ONCE(kshrink_slabd_task) &&
@@ -227,16 +233,31 @@ static void kshrink_slabd_bypass(void *data, gfp_t gfp_mask, int nid,
 		return;
 	}
 
-	curr_jiffies = jiffies;
-	diff_jiffies = curr_jiffies - READ_ONCE(prev_jiffies);
-	WRITE_ONCE(prev_jiffies, curr_jiffies);
-
-	if (current == READ_ONCE(kshrink_slabd_task) || (diff_jiffies < HZ * 1)) {
+	/* The worker itself always shrinks synchronously. */
+	if (current == READ_ONCE(kshrink_slabd_task)) {
 		*bypass = false;
-	} else {
-		*bypass = true;
-		kshrink_slabd_queue(gfp_mask, nid, memcg, priority);
+		return;
 	}
+
+	/*
+	 * Claim the throttle window atomically. Publishing the timestamp
+	 * before deciding (the previous behaviour) let a second CPU read the
+	 * just-written value, compute a near-zero difference and shrink
+	 * synchronously, so concurrent callers defeated the throttle instead
+	 * of being deferred by it. With cmpxchg only the CPU that wins the
+	 * window defers work to the shrinker; the others fall through to a
+	 * synchronous shrink, which is the safe direction.
+	 */
+	curr = jiffies;
+	prev = READ_ONCE(kshrink_slabd_prev_jiffies);
+	if (curr - prev < HZ * 1 ||
+	    cmpxchg(&kshrink_slabd_prev_jiffies, prev, curr) != prev) {
+		*bypass = false;
+		return;
+	}
+
+	*bypass = true;
+	kshrink_slabd_queue(gfp_mask, nid, memcg, priority);
 }
 
 static int kshrink_slabd_proc_show(struct seq_file *m, void *v)
@@ -269,6 +290,7 @@ static int __init kshrink_slabd_init(void)
 
 	proc_create_single("kshrink_slabd", 0444, NULL,
 			   kshrink_slabd_proc_show);
+	WRITE_ONCE(kshrink_slabd_prev_jiffies, jiffies);
 	WRITE_ONCE(kshrink_slabd_enabled, true);
 	return 0;
 }

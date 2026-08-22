@@ -2,7 +2,7 @@
 
 > 本分支（kernel-customizations-docs）按**特性**整理正式版（android13-5.15-lts-2026-07）相对基线 43f7d63d83ca 的全部修改。
 > 每个特性一个文件夹，含**修改过的完整代码文件** + 说明。排除 folio 实验分支。
-> 更新日期：2026-08-22 (R7.3)
+> 更新日期：2026-08-23 (R7.4)
 
 ## 目录结构
 
@@ -29,15 +29,15 @@
 |---|---|---|---|---|
 | 01 | mi_sw_sync | 原生改造 | R2 | 内建 /dev/mi_sw_sync misc 设备 |
 | 02 | binder_sched_opt | **酷安** (Moon) | R2/R7.3 | binder 调度优化 (SF FIFO-98 + 运行时开关 + policy 白名单修复) |
-| 03 | kshrink_slabd | **小米 piano** | R2 | 异步 slab 回收 |
-| 04 | kshrink_lruvecd | 异步回收系列 | R2 | 异步 lruvec 回收 |
+| 03 | kshrink_slabd | **小米 piano** | R2/R7.4 | 异步 slab 回收（时间窗原子化修复） |
+| 04 | kshrink_lruvecd | 异步回收系列 | R2/R7.4 | 异步 lruvec 回收（NR_ISOLATED 记账 + MGLRU 接线） |
 | 05 | sew_audit LSM | **JiuXia 自研** | R3/R7.2/R7.3 | 模块加载阻断(前缀匹配, 含 /data/adb/modules 与 /system_dlkm) |
-| 06 | mi_rmap | **小米 piano** | R5 | 高 mapcount 页保护 |
-| 07 | unionpower | **小米 MIUI** | R5 | 帧卡顿检测 |
+| 06 | mi_rmap | **小米 piano** | R5/R7.4 | 高 mapcount 页保护（Sew 私有 hook） |
+| 07 | unionpower | **小米 MIUI** | R5/R7.4 | 帧卡顿检测（用户指针校验） |
 | 08 | ipset + BBR | 内建 | R6 | 网络优化 |
-| 09 | 基础修复 | — | R1-R7 | DRM clone 校验移除(5.15.184+ GKI 与 vendor DSI 冲突致黑屏)/LZ4/defconfig/LOCALVERSION |
+| 09 | 基础修复 | — | R1-R7.4 | DRM clone 校验移除(5.15.184+ GKI 与 vendor DSI 冲突致黑屏)/LZ4/defconfig/LOCALVERSION |
 | 10 | zstdh | Meta zstd 1.5.7 改名 | R6.3/R7 | zram 压缩后端 |
-| 11 | sew_mmap_bypass | 自研 | R7/R7.3 | 回收节流旁路, R7.3 起按 cpuset 收窄至交互组 |
+| 11 | sew_mmap_bypass | 自研 | R7/R7.3/R7.4 | 回收节流旁路, R7.3 起按 cpuset 收窄至交互组 |
 | 12 | sew_alloc_adjust | Oplus kswapd_opt | R7 | 高阶分配去 __GFP_RECLAIM |
 
 ## 来源说明（重要）

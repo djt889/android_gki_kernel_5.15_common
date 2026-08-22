@@ -13,6 +13,8 @@
 #include <linux/sched.h>
 #include <linux/mm.h>
 #include <linux/cgroup.h>
+#include <linux/kernfs.h>
+#include <linux/rcupdate.h>
 #include <linux/string.h>
 #include <trace/hooks/vmscan.h>
 
@@ -26,27 +28,47 @@ static bool sew_mmap_bypass_enabled = true;
  * throttled (conservative).
  */
 static const char * const sew_bypass_cpuset[] = {
-	"/top-app", "/foreground", "/system", "/system-background", NULL
+	"top-app", "foreground", "system", "system-background", NULL
 };
 
-#if IS_ENABLED(CONFIG_CGROUPS)
+/*
+ * R7.3.1: must stay lock-free. The previous version called
+ * task_cgroup_path(), which takes cgroup_mutex + css_set_lock; doing that
+ * from the direct-reclaim slow path deadlocks against other holders and
+ * hung the device during boot. Read the cpuset css name under RCU instead:
+ * task_css_check(..., true) is safe without any lock, and kernfs_node::name
+ * is stable for the lifetime of the node.
+ */
+#if IS_ENABLED(CONFIG_CPUSETS)
 static bool sew_task_in_bypass_cpuset(struct task_struct *t)
 {
-	char path[64];
-	int ret;
+	struct cgroup_subsys_state *css;
+	struct kernfs_node *kn;
+	const char *name;
+	bool ret = false;
 	int i;
 
-	/* task_cgroup_path() reports the task's primary (cpuset) v1
-	 * hierarchy path. It takes cgroup_mutex — acceptable here: this
-	 * hook only fires on the allocation slow path under pressure. */
-	ret = task_cgroup_path(t, path, sizeof(path));
-	if (ret < 0)
-		return false;
-
-	for (i = 0; sew_bypass_cpuset[i]; i++)
-		if (!strcmp(path, sew_bypass_cpuset[i]))
-			return true;
-	return false;
+	rcu_read_lock();
+	css = task_css_check(t, cpuset_cgrp_id, true);
+	if (!css || !css->cgroup)
+		goto out;
+	kn = css->cgroup->kn;
+	if (!kn)
+		goto out;
+	/* kernfs_node::name is a plain const char * (not __rcu); stable while
+	 * the node is alive, and we hold rcu_read_lock across the compare. */
+	name = kn->name;
+	if (!name)
+		goto out;
+	for (i = 0; sew_bypass_cpuset[i]; i++) {
+		if (!strcmp(name, sew_bypass_cpuset[i])) {
+			ret = true;
+			break;
+		}
+	}
+out:
+	rcu_read_unlock();
+	return ret;
 }
 #else
 static bool sew_task_in_bypass_cpuset(struct task_struct *t) { return false; }
