@@ -30,17 +30,24 @@ static const char * const sew_audit_block_prefixes[] = {
 };
 
 /*
- * System partition mount points. Loads from any other path (e.g. recovery
- * ramdisk) pass so recovery boot is not broken.
+ * Paths whose duplicate-module loads are blocked: system partitions, plus
+ *  - /system_dlkm/: GKI vendor module partition (Android 13+)
+ *  - /data/adb/modules/: Magisk/KernelSU module storage; a binder_prio ko
+ *    loaded from here would double-register the same vendor hooks as the
+ *    built-in binder_sched_opt (observed LSPosed safe-mode trigger).
+ * Recovery/ramdisk paths (first-stage /lib/modules) stay allowed by design
+ * so recovery boot is never broken.
  */
-static bool sew_audit_system_path(const char *path)
+static bool sew_audit_block_path(const char *path)
 {
 	return !strncmp(path, "/vendor_dlkm/", 13) ||
 	       !strncmp(path, "/vendor/", 8) ||
 	       !strncmp(path, "/system/", 8) ||
 	       !strncmp(path, "/odm/", 5) ||
 	       !strncmp(path, "/product/", 9) ||
-	       !strncmp(path, "/system_ext/", 12);
+	       !strncmp(path, "/system_ext/", 12) ||
+	       !strncmp(path, "/system_dlkm/", 13) ||
+	       !strncmp(path, "/data/adb/modules/", 18);
 }
 
 static bool sew_audit_name_blocked(const char *name, unsigned int len)
@@ -81,9 +88,9 @@ static int sew_audit_kernel_read_file(struct file *file,
 			return 0;
 
 		path = d_path(&file->f_path, buf, PATH_MAX);
-		if (!IS_ERR(path) && sew_audit_system_path(path)) {
+		if (!IS_ERR(path) && sew_audit_block_path(path)) {
 			__putname(buf);
-			pr_info_ratelimited("sew_audit: BLOCKED module %s (system path)\n",
+			pr_info_ratelimited("sew_audit: BLOCKED module %s (protected path)\n",
 					    dentry->d_name.name);
 			return -EPERM;
 		}
