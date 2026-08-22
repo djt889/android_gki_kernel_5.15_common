@@ -12,9 +12,45 @@
 #include <linux/module.h>
 #include <linux/sched.h>
 #include <linux/mm.h>
+#include <linux/cgroup.h>
+#include <linux/string.h>
 #include <trace/hooks/vmscan.h>
 
 static bool sew_mmap_bypass_enabled = true;
+
+/*
+ * R7.3: bypass is scoped to interactive cpuset groups (Android /dev/cpuset
+ * layout). background/restricted tasks keep the upstream throttle queue so
+ * heavy reclaim pressure can no longer put every CPU into an unproductive
+ * reclaim storm. Exact-match names; unknown/root groups fall back to
+ * throttled (conservative).
+ */
+static const char * const sew_bypass_cpuset[] = {
+	"/top-app", "/foreground", "/system", "/system-background", NULL
+};
+
+#if IS_ENABLED(CONFIG_CGROUPS)
+static bool sew_task_in_bypass_cpuset(struct task_struct *t)
+{
+	char path[64];
+	int ret;
+	int i;
+
+	/* task_cgroup_path() reports the task's primary (cpuset) v1
+	 * hierarchy path. It takes cgroup_mutex — acceptable here: this
+	 * hook only fires on the allocation slow path under pressure. */
+	ret = task_cgroup_path(t, path, sizeof(path));
+	if (ret < 0)
+		return false;
+
+	for (i = 0; sew_bypass_cpuset[i]; i++)
+		if (!strcmp(path, sew_bypass_cpuset[i]))
+			return true;
+	return false;
+}
+#else
+static bool sew_task_in_bypass_cpuset(struct task_struct *t) { return false; }
+#endif
 module_param_named(enabled, sew_mmap_bypass_enabled, bool, 0644);
 MODULE_PARM_DESC(enabled, "Enable direct-reclaim throttle bypass (default 1)");
 
@@ -29,6 +65,9 @@ static void sew_mmap_throttle_bypass(void *data, bool *bypass)
 	if (current->flags & PF_MEMALLOC)
 		return;
 
+	if (!sew_task_in_bypass_cpuset(current))
+		return;
+
 	*bypass = true;
 }
 
@@ -41,7 +80,7 @@ static int __init sew_mmap_bypass_init(void)
 	if (ret)
 		return ret;
 
-	pr_info("sew_mmap_bypass: registered (enabled=%d)\n",
+	pr_info("sew_mmap_bypass: registered (enabled=%d, cpuset-scoped)\n",
 		sew_mmap_bypass_enabled ? 1 : 0);
 	return 0;
 }

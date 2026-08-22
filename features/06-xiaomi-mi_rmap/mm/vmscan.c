@@ -6466,6 +6466,14 @@ static bool throttle_direct_reclaim(gfp_t gfp_mask, struct zonelist *zonelist,
 	if (!pgdat)
 		goto out;
 
+	{
+		bool bypass = false;
+
+		trace_android_vh_throttle_direct_reclaim_bypass(&bypass);
+		if (bypass)
+			goto out;
+	}
+
 	/* Account for the throttling */
 	count_vm_event(PGSCAN_DIRECT_THROTTLE);
 
