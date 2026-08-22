@@ -17,6 +17,7 @@
 #define pr_fmt(fmt) "binder_sched_opt: " fmt
 
 #include <linux/init.h>
+#include <linux/module.h>
 #include <linux/proc_fs.h>
 #include <linux/sched.h>
 #include <linux/sched/rt.h>
@@ -28,6 +29,15 @@
 #include "binder_internal.h"
 
 #define BINDER_SCHED_OPT_FIFO_PRIO	98
+
+/*
+ * Runtime master switch (R7.3): /sys/module/binder_sched_opt/parameters/enabled
+ * 0 disables all three hooks without reflashing. Note: the trans hook's
+ * default_priority write persists in the target proc until it restarts.
+ */
+static bool binder_sched_opt_enabled = true;
+module_param_named(enabled, binder_sched_opt_enabled, bool, 0644);
+MODULE_PARM_DESC(enabled, "Enable binder_sched_opt hooks (default 1)");
 
 /* Original module's worker-name table (strncmp prefix). */
 static const char * const binder_sched_opt_workers[] = {
@@ -67,27 +77,24 @@ static bool binder_sched_opt_is_sf(const struct binder_proc *proc)
  */
 static void binder_sched_opt_ko_sched(struct task_struct *task)
 {
-	struct sched_param param;
-	unsigned int low_policy;
-
+	/*
+	 * R7.3: the legacy "policy & 0x3" bitmask admitted SCHED_IDLE(5) and
+	 * SCHED_DEADLINE(6) by low-bit coincidence and then forced a nonzero
+	 * sched_priority onto them via sched_setscheduler_nocheck, corrupting
+	 * their scheduling state. On 5.15 the only safe elevation would be an
+	 * explicit SCHED_FIFO/RR switch, which this port deliberately avoids
+	 * (R7 policy). Keep an explicit policy whitelist + rt_task() guard;
+	 * every remaining path is a no-op, so the function body ends here.
+	 */
 	if (!task)
 		return;
-
-	low_policy = task->policy & 0x3;
-	if (low_policy < 1 || low_policy > 2)
+	if (task->policy != SCHED_NORMAL && task->policy != SCHED_FIFO &&
+	    task->policy != SCHED_RR)
 		return;
 	if (rt_task(task))
 		return;
-
-	param.sched_priority = 99 - task->normal_prio;
-	if (param.sched_priority < 1)
-		param.sched_priority = 1;
-	if (param.sched_priority > MAX_RT_PRIO - 1)
-		param.sched_priority = MAX_RT_PRIO - 1;
-
-	sched_setscheduler_nocheck(task,
-				   low_policy | SCHED_RESET_ON_FORK,
-				   &param);
+	/* SCHED_NORMAL survives both guards: elevating it would require
+	 * sched_setscheduler(SCHED_FIFO|...) — intentionally not done. */
 }
 
 /* ko: target surfaceflinger && !frozen -> priority = FIFO/98 */
@@ -96,6 +103,8 @@ static void binder_sched_opt_trans(void *unused, struct binder_proc *target_proc
 				   struct binder_thread *thread,
 				   struct binder_transaction_data *tr)
 {
+	if (!binder_sched_opt_enabled)
+		return;
 	if (!target_proc || !proc || !thread || !tr)
 		return;
 
@@ -122,6 +131,8 @@ static void binder_sched_opt_set_priority(void *unused,
 					  struct binder_transaction *transaction,
 					  struct task_struct *task)
 {
+	if (!binder_sched_opt_enabled)
+		return;
 	if (!transaction || !task)
 		return;
 	if (!binder_sched_opt_is_sf(transaction->to_proc))
@@ -139,6 +150,8 @@ static void binder_sched_opt_transaction_finish(void *unused,
 						struct task_struct *binder_thread_task,
 						bool pending_async, bool sync)
 {
+	if (!binder_sched_opt_enabled)
+		return;
 	if (!proc || !transaction || !binder_thread_task || sync)
 		return;
 	if (!pending_async)
@@ -159,7 +172,7 @@ static void binder_sched_opt_transaction_finish(void *unused,
 
 static int binder_sched_opt_proc_show(struct seq_file *m, void *unused)
 {
-	seq_puts(m, "enabled\n");
+	seq_printf(m, "enabled %d\n", binder_sched_opt_enabled ? 1 : 0);
 	return 0;
 }
 
