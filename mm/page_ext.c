@@ -75,9 +75,6 @@ struct page_ext_operations page_idle_ops = {
 #endif
 
 static struct page_ext_operations *page_ext_ops[] = {
-#ifdef CONFIG_KSHRINK_LRUVECD
-	&kshrink_page_ext_ops,
-#endif
 #ifdef CONFIG_PAGE_OWNER
 	&page_owner_ops,
 #endif
@@ -86,6 +83,14 @@ static struct page_ext_operations *page_ext_ops[] = {
 #endif
 #ifdef CONFIG_PAGE_PINNER
 	&page_pinner_ops,
+#endif
+	/*
+	 * Sew clients must stay last: page_ext offsets are assigned in array
+	 * order, so inserting ahead of the upstream entries shifts
+	 * page_owner/page_pinner offsets and changes lookup_page_ext ABI.
+	 */
+#ifdef CONFIG_KSHRINK_LRUVECD
+	&kshrink_page_ext_ops,
 #endif
 };
 

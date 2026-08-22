@@ -181,6 +181,16 @@ DECLARE_HOOK(android_vh_do_traversal_lruvec,
 	TP_PROTO(struct lruvec *lruvec),
 	TP_ARGS(lruvec));
 DECLARE_HOOK(android_vh_page_should_be_protected,
+	TP_PROTO(struct page *page, bool *should_protect),
+	TP_ARGS(page, should_protect));
+/*
+ * Sew-private variant of the above. The upstream GKI hook is part of the
+ * stable KMI, so its signature must not be changed: modifying it shifts the
+ * __traceiter_ symbol CRC and breaks every vendor module that references it.
+ * mi_rmap_efficiency needs the extra reclaim context (scan counter, priority
+ * and a per-scan state word), so it gets its own hook instead.
+ */
+DECLARE_HOOK(android_vh_sew_page_should_be_protected,
 	TP_PROTO(struct page *page, unsigned long nr_scanned,
 	s8 priority, u64 *ext, int *should_protect),
 	TP_ARGS(page, nr_scanned, priority, ext, should_protect));

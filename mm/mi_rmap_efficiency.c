@@ -5,7 +5,8 @@
  * Faithful port of Xiaomi's mi_rmap_efficiency module (piano-w-oss branch,
  * drivers/staging/mi_rmap_efficiency/mi_rmap_efficiency.c) adapted to this
  * 5.15 kernel's page-based vmscan and the page-based
- * android_vh_page_should_be_protected hook.
+ * android_vh_sew_page_should_be_protected hook (Sew-private variant; the
+ * upstream GKI hook keeps its original signature for KMI stability).
  *
  * Core logic preserved 1:1:
  *  - mapcount >= mi_mapcount_thres (32)  -> ACTIVATE (protect, rotate)
@@ -204,7 +205,7 @@ static int __init mi_rmap_efficiency_init(void)
 
 	init_mi_rmap_efficiency_sysfs();
 
-	ret = register_trace_android_vh_page_should_be_protected(
+	ret = register_trace_android_vh_sew_page_should_be_protected(
 		mi_check_mapcount, NULL);
 	if (ret) {
 		pr_err("mi_rmap_efficiency: register hook failed ret=%d\n", ret);

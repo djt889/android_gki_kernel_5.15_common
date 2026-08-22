@@ -1281,10 +1281,10 @@ static enum page_references page_check_references(struct page *page,
 	bool trylock_fail = false;
 	int ret = 0;
 
-	trace_android_vh_page_should_be_protected(page, sc->nr_scanned,
-						  sc->priority,
-						  &sc->android_vendor_data1,
-						  &should_protect);
+	trace_android_vh_sew_page_should_be_protected(page, sc->nr_scanned,
+						     sc->priority,
+						     &sc->android_vendor_data1,
+						     &should_protect);
 	if (unlikely(should_protect))
 		return PAGEREF_ACTIVATE;
 
@@ -2456,10 +2456,10 @@ static void shrink_active_list(unsigned long nr_to_scan,
 			}
 		}
 
-		trace_android_vh_page_should_be_protected(page, sc->nr_scanned,
-							  sc->priority,
-							  &sc->android_vendor_data1,
-							  &should_protect);
+		trace_android_vh_sew_page_should_be_protected(page, sc->nr_scanned,
+							     sc->priority,
+							     &sc->android_vendor_data1,
+							     &should_protect);
 		if (unlikely(should_protect)) {
 			nr_rotated += thp_nr_pages(page);
 			list_add(&page->lru, &l_active);
@@ -4888,6 +4888,18 @@ static int evict_pages(struct lruvec *lruvec, struct scan_control *sc, int swapp
 retry:
 	reclaimed = shrink_page_list(&list, pgdat, sc, &stat, false);
 	sc->nr_reclaimed += reclaimed;
+
+	/*
+	 * Same hand-off point as shrink_inactive_list(): pages whose rmap
+	 * trylock failed are picked up here for asynchronous reclaim. This
+	 * runs on the retry pass too, because that pass goes through
+	 * shrink_page_list() again and can set the delay bit anew; the
+	 * callback clears both trylock bits for every page it walks, so
+	 * skipping it would leak stale bits back onto the LRU. Unlike the
+	 * legacy path, MGLRU never accounts NR_ISOLATED_*, so the callback
+	 * must not adjust it here.
+	 */
+	trace_android_vh_handle_failed_page_trylock_mglru(&list);
 
 	list_for_each_entry_safe_reverse(page, next, &list, lru) {
 		bool bypass = false;

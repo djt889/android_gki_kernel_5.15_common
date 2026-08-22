@@ -33,8 +33,14 @@ static long device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         return ret;
     }
     msg = &smsg;
-    if (__copy_from_user(msg, msgUM, sizeof(struct _BUFFER_PACKAGE))) {
-        return EFAULT;
+    /*
+     * copy_from_user() (not the __ variant): this proc node is mode 0664, so
+     * any app can call the ioctl and the pointer must be range-checked.
+     * Also return a negative errno; the original returned +EFAULT, which
+     * userspace reads as a successful 14-byte result.
+     */
+    if (copy_from_user(msg, msgUM, sizeof(struct _BUFFER_PACKAGE))) {
+        return -EFAULT;
     }
     switch (cmd) {
     case BUFFER_QUEUE:

@@ -7,6 +7,7 @@
 #include <linux/module.h>
 #include <linux/kshrink_lruvecd.h>
 #include <linux/mm.h>
+#include <linux/mm_inline.h>
 #include <linux/page_ext.h>
 #include <linux/proc_fs.h>
 #include <linux/rwsem.h>
@@ -45,8 +46,31 @@ static bool async_shrink_lruvec_setup;
 static bool shrink_lruvec_runnable;
 static bool shrink_lruvec_affinity_set;
 static unsigned long shrink_lruvec_pages;
+static unsigned long shrink_lruvec_isolated_anon;
+static unsigned long shrink_lruvec_isolated_file;
 static unsigned long shrink_lruvec_pages_max;
 static unsigned long shrink_lruvec_handle_pages;
+
+/*
+ * Pages moved onto lru_inactive stay isolated until the worker reclaims or
+ * puts them back, but shrink_inactive_list() unconditionally subtracts its
+ * full nr_taken right after this hook returns — including the pages taken
+ * over here. Re-add our share to NR_ISOLATED_* so the counter keeps matching
+ * reality (too_many_isolated() and the pfmemalloc watermarks depend on it),
+ * and drop it again once the worker is done with them.
+ */
+static void kshrink_isolated_account(unsigned long nr_anon,
+				     unsigned long nr_file, int sign)
+{
+	struct pglist_data *pgdat = NODE_DATA(first_online_node);
+
+	if (nr_anon)
+		mod_node_page_state(pgdat, NR_ISOLATED_ANON,
+				    sign * (long)nr_anon);
+	if (nr_file)
+		mod_node_page_state(pgdat, NR_ISOLATED_FILE,
+				    sign * (long)nr_file);
+}
 
 static struct kshrink_page_ext *kshrink_page_ext_get(struct page *page,
 						     struct page_ext **page_ext)
@@ -136,12 +160,24 @@ static void do_page_trylock(void *unused, struct page *page,
 	page_ext_put(page_ext);
 }
 
-/* This is the original hook's transfer point, before vmscan LRU completion. */
-static void handle_failed_page_trylock(void *unused, struct list_head *page_list)
+/*
+ * Shared body for both transfer points.
+ *
+ * @account: whether the caller's reclaim path accounts NR_ISOLATED_*.
+ * shrink_inactive_list() subtracts its full nr_taken right after the hook,
+ * including the pages taken over here, so that path needs our share re-added
+ * (and dropped again by the worker). evict_pages() never touches
+ * NR_ISOLATED_* at all, so adjusting it from the MGLRU path would inflate the
+ * counter and make too_many_isolated() throttle direct reclaimers for no
+ * reason.
+ */
+static void __steal_delayed_pages(struct list_head *page_list, bool account)
 {
 	LIST_HEAD(local_list);
 	struct page *page, *next;
 	unsigned long queued = 0;
+	unsigned long queued_anon = 0;
+	unsigned long queued_file = 0;
 
 	if (!READ_ONCE(async_shrink_lruvec_setup))
 		return;
@@ -168,6 +204,10 @@ static void handle_failed_page_trylock(void *unused, struct list_head *page_list
 
 		list_move_tail(&page->lru, &local_list);
 		queued += nr_pages;
+		if (page_is_file_lru(page))
+			queued_file += nr_pages;
+		else
+			queued_anon += nr_pages;
 	}
 
 	if (!queued)
@@ -175,17 +215,38 @@ static void handle_failed_page_trylock(void *unused, struct list_head *page_list
 
 	spin_lock_irq(&l_inactive_lock);
 	if (shrink_lruvec_pages + queued > SHRINK_LRUVECD_HIGH) {
+		/* handed back to vmscan: its own accounting still covers them */
 		list_splice_tail_init(&local_list, page_list);
 		spin_unlock_irq(&l_inactive_lock);
 		return;
 	}
 	list_splice_tail_init(&local_list, &lru_inactive);
 	shrink_lruvec_pages += queued;
+	if (account) {
+		shrink_lruvec_isolated_anon += queued_anon;
+		shrink_lruvec_isolated_file += queued_file;
+	}
 	shrink_lruvec_pages_max = max(shrink_lruvec_pages_max,
 				      shrink_lruvec_pages);
 	shrink_lruvec_runnable = true;
 	spin_unlock_irq(&l_inactive_lock);
+
+	if (account)
+		kshrink_isolated_account(queued_anon, queued_file, +1);
 	wake_up_interruptible(&shrink_lruvec_wait);
+}
+
+/* Legacy LRU transfer point: shrink_inactive_list(), accounts NR_ISOLATED_*. */
+static void handle_failed_page_trylock(void *unused, struct list_head *page_list)
+{
+	__steal_delayed_pages(page_list, true);
+}
+
+/* MGLRU transfer point: evict_pages(), which does no NR_ISOLATED_* accounting. */
+static void handle_failed_page_trylock_mglru(void *unused,
+					     struct list_head *page_list)
+{
+	__steal_delayed_pages(page_list, false);
 }
 
 static void kshrink_lruvecd_set_affinity(void)
@@ -228,6 +289,8 @@ static int shrink_lruvecd(void *unused)
 		LIST_HEAD(local_list);
 		struct page *page;
 		unsigned long nr_pages = 0;
+		unsigned long batch_anon;
+		unsigned long batch_file;
 
 		wait_event_freezable(shrink_lruvec_wait,
 			READ_ONCE(shrink_lruvec_runnable) || kthread_should_stop());
@@ -236,11 +299,17 @@ static int shrink_lruvecd(void *unused)
 
 		spin_lock_irq(&l_inactive_lock);
 		list_splice_init(&lru_inactive, &local_list);
+		batch_anon = shrink_lruvec_isolated_anon;
+		batch_file = shrink_lruvec_isolated_file;
+		shrink_lruvec_isolated_anon = 0;
+		shrink_lruvec_isolated_file = 0;
 		shrink_lruvec_runnable = false;
 		spin_unlock_irq(&l_inactive_lock);
 
-		if (list_empty(&local_list))
+		if (list_empty(&local_list)) {
+			kshrink_isolated_account(batch_anon, batch_file, -1);
 			continue;
+		}
 
 		if (!shrink_lruvec_affinity_set)
 			kshrink_lruvecd_set_affinity();
@@ -251,6 +320,9 @@ static int shrink_lruvecd(void *unused)
 		shrink_lruvec_handle_pages += nr_pages;
 		spin_unlock_irq(&l_inactive_lock);
 		reclaim_pages(&local_list);
+
+		/* reclaim_pages() freed or put back every page: no longer isolated */
+		kshrink_isolated_account(batch_anon, batch_file, -1);
 
 		spin_lock_irq(&l_inactive_lock);
 		shrink_lruvec_pages -= nr_pages;
@@ -293,9 +365,13 @@ static int __init kshrink_lruvecd_init(void)
 		handle_failed_page_trylock, NULL);
 	if (ret)
 		goto stop_thread;
-	ret = register_trace_android_vh_page_trylock_set(page_trylock_set, NULL);
+	ret = register_trace_android_vh_handle_failed_page_trylock_mglru(
+		handle_failed_page_trylock_mglru, NULL);
 	if (ret)
 		goto unregister_failed_page_trylock;
+	ret = register_trace_android_vh_page_trylock_set(page_trylock_set, NULL);
+	if (ret)
+		goto unregister_failed_page_trylock_mglru;
 	ret = register_trace_android_vh_page_trylock_clear(page_trylock_clear, NULL);
 	if (ret)
 		goto unregister_page_trylock_set;
@@ -325,6 +401,9 @@ unregister_page_trylock_clear:
 	unregister_trace_android_vh_page_trylock_clear(page_trylock_clear, NULL);
 unregister_page_trylock_set:
 	unregister_trace_android_vh_page_trylock_set(page_trylock_set, NULL);
+unregister_failed_page_trylock_mglru:
+	unregister_trace_android_vh_handle_failed_page_trylock_mglru(
+		handle_failed_page_trylock_mglru, NULL);
 unregister_failed_page_trylock:
 	unregister_trace_android_vh_handle_failed_page_trylock(
 		handle_failed_page_trylock, NULL);
