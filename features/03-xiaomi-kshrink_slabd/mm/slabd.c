@@ -79,16 +79,18 @@ extern unsigned long shrink_slab(gfp_t gfp_mask, int nid,
 				 struct mem_cgroup *memcg, int priority);
 
 /*
- * Original set_async_slabd_cpus(): walk possible CPUs, pick the policy
- * with the highest cpuinfo.max_freq, then bind the worker to the NODE0
- * cpumask minus that policy's related CPUs. Runs once. Unlike the
- * original, policies are released with cpufreq_cpu_put().
+ * Bind the worker to everything except the lowest-frequency cluster, the
+ * same policy kshrink_lruvecd uses. Asynchronous memory reclaim is a
+ * sustained load: leaving it on the little cores saturates them and drags
+ * down whatever interactive work shares them. The original implementation
+ * excluded the highest-frequency cluster instead, which does the opposite.
+ * Runs once; policies are released with cpufreq_cpu_put().
  */
 static void kshrink_slabd_set_affinity(void)
 {
 	struct cpufreq_policy *policy;
-	struct cpufreq_policy *policy_max = NULL;
-	unsigned int cpufreq_max_tmp = 0;
+	struct cpufreq_policy *policy_min = NULL;
+	unsigned int cpufreq_min_tmp = 0;
 	cpumask_t allowed;
 	int cpu;
 
@@ -100,21 +102,22 @@ static void kshrink_slabd_set_affinity(void)
 		if (!policy)
 			continue;
 
-		if (policy->cpuinfo.max_freq >= cpufreq_max_tmp) {
-			cpufreq_max_tmp = policy->cpuinfo.max_freq;
-			if (policy_max)
-				cpufreq_cpu_put(policy_max);
-			policy_max = policy;
+		if (!cpufreq_min_tmp ||
+		    policy->cpuinfo.max_freq < cpufreq_min_tmp) {
+			cpufreq_min_tmp = policy->cpuinfo.max_freq;
+			if (policy_min)
+				cpufreq_cpu_put(policy_min);
+			policy_min = policy;
 		} else {
 			cpufreq_cpu_put(policy);
 		}
 	}
-	if (!policy_max)
+	if (!policy_min)
 		return;
 
 	cpumask_copy(&allowed, cpumask_of_node(NODE_DATA(0)->node_id));
-	cpumask_andnot(&allowed, &allowed, policy_max->related_cpus);
-	cpufreq_cpu_put(policy_max);
+	cpumask_andnot(&allowed, &allowed, policy_min->related_cpus);
+	cpufreq_cpu_put(policy_min);
 
 	if (!cpumask_empty(&allowed) &&
 	    !set_cpus_allowed_ptr(current, &allowed))

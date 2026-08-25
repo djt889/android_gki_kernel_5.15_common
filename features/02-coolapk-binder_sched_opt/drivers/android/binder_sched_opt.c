@@ -3,9 +3,27 @@
  * Built-in port of the Moon Binder scheduling policy.
  *
  * Mirrors the original module's three vendor hooks:
- *  - android_vh_binder_trans: SurfaceFlinger-targeted transactions raise
- *    the target proc default priority to FIFO/98 (ko wrote FIFO/98 into
- *    the transaction priority slot at old-layout offset 0x198).
+ *  - android_vh_binder_trans: the ko wrote FIFO/98 into the transaction
+ *    priority slot at old-layout offset 0x198. Not ported, and the hook is
+ *    no longer registered at all. The R2 translation wrote FIFO/98 into
+ *    target_proc->default_priority instead, which is a different thing:
+ *    binder_thread_read() also reads default_priority when a binder thread
+ *    goes back to waiting for process work, and that path runs
+ *    binder_restore_priority() -> binder_do_set_priority(verify=false),
+ *    skipping the RLIMIT_RTPRIO clamp and calling
+ *    sched_setscheduler_nocheck(SCHED_FIFO|SCHED_RESET_ON_FORK). It never
+ *    passes through binder_transaction_priority(), so node->inherit_rt does
+ *    not gate it: every SurfaceFlinger binder thread became a real-time
+ *    thread and stayed one until SF restarted, preempting system_server,
+ *    inverting priority whenever it blocked on a userspace futex held by a
+ *    CFS task, and bypassing EAS placement. The value was wrong too -
+ *    binder_priority.prio is a kernel priority, and to_userspace_prio()
+ *    maps RT kernel prio 98 to userspace RT priority 99 - 98 = 1, the
+ *    lowest real-time band. Granting a genuine FIFO/98 is the ko's real
+ *    intent, but that is the same unconditional RT promotion removed from
+ *    binder_sched_opt_ko_sched() in R7 (perfetto crash / LSPosed safe
+ *    mode). Leaving default_priority as binder_mmap() set it restores
+ *    upstream GKI behaviour.
  *  - android_vh_binder_set_priority: binder threads whose comm matches
  *    the original UI/system list are moved to RT class while keeping
  *    their current policy bits and SCHED_RESET_ON_FORK
@@ -28,12 +46,9 @@
 
 #include "binder_internal.h"
 
-#define BINDER_SCHED_OPT_FIFO_PRIO	98
-
 /*
  * Runtime master switch (R7.3): /sys/module/binder_sched_opt/parameters/enabled
- * 0 disables all three hooks without reflashing. Note: the trans hook's
- * default_priority write persists in the target proc until it restarts.
+ * 0 disables the registered hooks without reflashing.
  */
 static bool binder_sched_opt_enabled = true;
 module_param_named(enabled, binder_sched_opt_enabled, bool, 0644);
@@ -97,35 +112,6 @@ static void binder_sched_opt_ko_sched(struct task_struct *task)
 	 * sched_setscheduler(SCHED_FIFO|...) — intentionally not done. */
 }
 
-/* ko: target surfaceflinger && !frozen -> priority = FIFO/98 */
-static void binder_sched_opt_trans(void *unused, struct binder_proc *target_proc,
-				   struct binder_proc *proc,
-				   struct binder_thread *thread,
-				   struct binder_transaction_data *tr)
-{
-	if (!binder_sched_opt_enabled)
-		return;
-	if (!target_proc || !proc || !thread || !tr)
-		return;
-
-	if (!binder_sched_opt_is_sf(target_proc))
-		return;
-	if (target_proc->is_frozen)
-		return;
-
-	/*
-	 * ko writes sched_policy=SCHED_FIFO and prio=98 directly into the
-	 * transaction's priority slot (old layout offset 0x198). On
-	 * 5.15.211 the transaction has not been allocated at this hook
-	 * point, so the faithful equivalent is to raise the target
-	 * proc's default priority under its inner lock.
-	 */
-	spin_lock(&target_proc->inner_lock);
-	target_proc->default_priority.sched_policy = SCHED_FIFO;
-	target_proc->default_priority.prio = BINDER_SCHED_OPT_FIFO_PRIO;
-	spin_unlock(&target_proc->inner_lock);
-}
-
 /* ko: caller/target comm in worker list -> move binder thread to RT */
 static void binder_sched_opt_set_priority(void *unused,
 					  struct binder_transaction *transaction,
@@ -184,21 +170,15 @@ static int __init binder_sched_opt_init(void)
 		binder_sched_opt_set_priority, NULL);
 	if (ret)
 		return ret;
-	ret = register_trace_android_vh_binder_trans(binder_sched_opt_trans,
-						     NULL);
-	if (ret)
-		goto unregister_set;
 	ret = register_trace_android_vh_binder_proc_transaction_finish(
 		binder_sched_opt_transaction_finish, NULL);
 	if (ret)
-		goto unregister_trans;
+		goto unregister_set;
 
 	proc_create_single("binder_sched_opt_status", 0444, NULL,
 			   binder_sched_opt_proc_show);
 	return 0;
 
-unregister_trans:
-	unregister_trace_android_vh_binder_trans(binder_sched_opt_trans, NULL);
 unregister_set:
 	unregister_trace_android_vh_binder_set_priority(
 		binder_sched_opt_set_priority, NULL);

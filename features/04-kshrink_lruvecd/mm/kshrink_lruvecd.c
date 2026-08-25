@@ -249,6 +249,11 @@ static void handle_failed_page_trylock_mglru(void *unused,
 	__steal_delayed_pages(page_list, false);
 }
 
+/*
+ * Exclude the lowest-frequency cluster: asynchronous reclaim must not sit on
+ * the little cores, which saturate easily and are shared with interactive
+ * work.
+ */
 static void kshrink_lruvecd_set_affinity(void)
 {
 	struct cpufreq_policy *policy;
@@ -283,6 +288,14 @@ static void kshrink_lruvecd_set_affinity(void)
 
 static int shrink_lruvecd(void *unused)
 {
+	/*
+	 * Same flags kswapd and the original Oplus worker use: PF_MEMALLOC so
+	 * reclaim allocations can dip into reserves, PF_SWAPWRITE so
+	 * may_write_to_inode() lets us write back dirty pages even when the
+	 * backing device is congested, and PF_KSWAPD to stay out of the normal
+	 * page-freeing accounting.
+	 */
+	current->flags |= PF_MEMALLOC | PF_SWAPWRITE | PF_KSWAPD;
 	set_freezable();
 
 	while (!kthread_should_stop()) {
@@ -328,6 +341,8 @@ static int shrink_lruvecd(void *unused)
 		shrink_lruvec_pages -= nr_pages;
 		spin_unlock_irq(&l_inactive_lock);
 	}
+
+	current->flags &= ~(PF_MEMALLOC | PF_SWAPWRITE | PF_KSWAPD);
 
 	return 0;
 }

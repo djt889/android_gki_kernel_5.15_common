@@ -156,25 +156,24 @@ EXPORT_SYMBOL(zstdh_compress_cctx);
 
 /*
  * zstdh: like zstdh_compress_cctx() but keeps the hash table warm across
- * calls (no session reset). The caller must guarantee the cctx is used by
- * a single CPU (zram does this via per-CPU streams). Parameters must be
- * identical on every call, which the caller ensures.
+ * calls. ZSTDH_compress2() internally does ZSTDH_reset_session_only, which
+ * resets the streaming state (streamStage, pledged size) but does NOT clear
+ * the dictionary/hash table (no ZSTDH_clearAllDicts), so the hash stays warm
+ * and the parameters set by the first full-init call are preserved. It also
+ * forces stable input/output buffer mode, matching the non-reuse path.
+ * The caller must guarantee the cctx is used by a single CPU (zram does this
+ * via per-CPU streams).
+ *
+ * The previous implementation called ZSTDH_compressStream2_simpleArgs(...
+ * ZSTDH_e_end) directly without going through ZSTDH_compress2(). That skipped
+ * the stable buffer-mode setup, so zram's 4KB pages took the buffered path,
+ * producing worse/unstable output (compr_data_size stayed ~0 and pages fell
+ * back to uncompressed storage, which also caused the observed jank).
  */
 size_t zstdh_compress_cctx_reuse(zstdh_cctx *cctx, void *dst, size_t dst_capacity,
 	const void *src, size_t src_size, const zstdh_parameters *parameters)
 {
-	size_t dstPos = 0, srcPos = 0;
-	size_t ret;
-
-	ZSTDH_FORWARD_IF_ERR(ZSTDH_CCtx_setPledgedSrcSize(cctx, src_size));
-	ZSTDH_FORWARD_IF_ERR(ZSTDH_CCtx_setParameter(
-		cctx, ZSTDH_c_contentSizeFlag, parameters->fParams.contentSizeFlag));
-	ret = ZSTDH_compressStream2_simpleArgs(cctx,
-		dst, dst_capacity, &dstPos,
-		src, src_size, &srcPos, ZSTDH_e_end);
-	if (ZSTDH_isError(ret))
-		return ret;
-	return dstPos;
+	return ZSTDH_compress2(cctx, dst, dst_capacity, src, src_size);
 }
 EXPORT_SYMBOL(zstdh_compress_cctx_reuse);
 
