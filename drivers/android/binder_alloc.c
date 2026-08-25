@@ -859,9 +859,14 @@ void binder_alloc_deferred_release(struct binder_alloc *alloc)
 			__free_page(alloc->pages[i].page_ptr);
 			page_count++;
 		}
-		kvfree(alloc->pages);
 	}
 	mutex_unlock(&alloc->mutex);
+	/*
+	 * kvfree() may end up in vfree(), which might_sleep(). Keep it outside
+	 * alloc->mutex so the call site stays valid if the lock is ever
+	 * converted to a spinlock, as upstream later did.
+	 */
+	kvfree(alloc->pages);
 	if (alloc->vma_vm_mm)
 		mmdrop(alloc->vma_vm_mm);
 
