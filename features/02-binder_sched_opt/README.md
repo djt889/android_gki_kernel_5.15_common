@@ -7,6 +7,12 @@ binder 调度优化特性。演进历程：
 - R7.3 加运行时开关并修 policy-mask 准入 bug
 - R7.6 重写为 transaction_received / restore_priority hook 路径，
   不再依赖初版的三条 vendor hook
+- **R7.8（2026-08-29）：默认 uclamp_min 512 → 256，放开小核。**
+  512 高于小核容量（~460/1024），事务期间经 util_fits_cpu() 隐式把 binder
+  交互线程拦在小核外（当初 512 的设计即利用此规则）。256 低于小核满容量，
+  选核完全交还 EAS（小核自由可入，仅极端热压下小核容量跌破 256 才拦截），
+  同时保留事务期间 ~25% 容量的温和频率地板。运行时可调：
+  /sys/module/binder_sched_opt/parameters/uclamp_min（回旧行为写 512）
 
 文件：`drivers/android/binder_sched_opt.c`, Kconfig, Makefile。
 （目录曾名 02-coolapk-binder_sched_opt，为纠正来源口径已改名。）
