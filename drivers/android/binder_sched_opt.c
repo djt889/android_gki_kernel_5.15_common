@@ -62,11 +62,19 @@ MODULE_PARM_DESC(enabled, "Enable binder_sched_opt hooks (default 1)");
  *
  * Units are the task-level scale (0..SCHED_CAPACITY_SCALE, i.e. 0..1024).
  * Note this is NOT the same unit as the cgroup files under /dev/cpuctl, which
- * take a percentage. 512 is half capacity, which on this SoC lands around the
- * mid cluster's efficient range; it must stay at or below whatever cap the
- * userspace scheduler module applies to top-app, or the two policies fight.
+ * take a percentage. Values above the little cluster's capacity (~460 on
+ * this SoC) also act as a cluster gate: util_fits_cpu() refuses to place the
+ * thread on a little core while the floor is raised. The historical default
+ * of 512 exploited that as an implicit "no little cores during binder
+ * transactions" rule.
+ *
+ * R7.8: default lowered to 256 so placement stays fully with EAS (every core,
+ * including little, satisfies the floor; only extreme thermal pressure on the
+ * little cluster can gate it), while keeping a modest frequency floor for the
+ * duration of the transaction. Raise it back per-device at runtime via
+ * /sys/module/binder_sched_opt/parameters/uclamp_min.
  */
-static unsigned int binder_sched_opt_uclamp_min = 512;
+static unsigned int binder_sched_opt_uclamp_min = 256;
 module_param_named(uclamp_min, binder_sched_opt_uclamp_min, uint, 0644);
 MODULE_PARM_DESC(uclamp_min,
 	"uclamp_min floor for boosted binder threads, 0..1024 (0 = off)");
