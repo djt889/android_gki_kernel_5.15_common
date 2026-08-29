@@ -1,11 +1,12 @@
 # 02-binder_sched_opt
 
-**JiuXia 自研特性（社区启发的起点，后续全部自有实现）**。
+binder 调度优化特性。演进历程：
 
-演进历程：R2 初版参考了酷安社区 Moon Binder 的调度思路（已与原实现无代码关系）；
-R7 修复过度 RT 提升（perfetto 崩溃/LSPosed 安全模式）；R7.3 加运行时开关并修
-policy-mask 准入 bug；**R7.6 完全重写**——改用自有 transaction_received/
-restore_priority hook 路径，不再依赖初版的三条 vendor hook。
+- R2 初版参考了酷安社区 Moon Binder 的调度思路（与原实现已无代码关系）
+- R7 修复过度 RT 提升（perfetto 崩溃/LSPosed 安全模式）
+- R7.3 加运行时开关并修 policy-mask 准入 bug
+- R7.6 重写为 transaction_received / restore_priority hook 路径，
+  不再依赖初版的三条 vendor hook
 
 文件：`drivers/android/binder_sched_opt.c`, Kconfig, Makefile。
 （目录曾名 02-coolapk-binder_sched_opt，为纠正来源口径已改名。）
