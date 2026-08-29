@@ -15,7 +15,7 @@ BASE=43f7d63d83ca
 # feature 目录 -> 正式分支文件 映射表（新增 feature 时在此登记）
 MAPPING=(
   "01-mi_sw_sync:drivers/dma-buf/sw_sync.c drivers/dma-buf/sync_debug.c drivers/dma-buf/sync_debug.h drivers/dma-buf/Kconfig"
-  "02-coolapk-binder_sched_opt:drivers/android/binder_sched_opt.c drivers/android/Kconfig drivers/android/Makefile"
+  "02-binder_sched_opt:drivers/android/binder_sched_opt.c drivers/android/Kconfig drivers/android/Makefile"
   "03-xiaomi-kshrink_slabd:mm/slabd.c mm/slabd.h mm/Kconfig mm/Makefile"
   "04-kshrink_lruvecd:mm/kshrink_lruvecd.c include/linux/kshrink_lruvecd.h mm/page_ext.c mm/Kconfig mm/Makefile"
   "05-jiuxia-sew_audit_lsm:security/sew_audit_lsm.c security/Kconfig security/Makefile"

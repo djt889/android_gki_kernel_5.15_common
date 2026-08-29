@@ -28,7 +28,7 @@
 | # | 特性 | 来源 | 版本 | 说明 |
 |---|---|---|---|---|
 | 01 | mi_sw_sync | 原生改造 | R2 | 内建 /dev/mi_sw_sync misc 设备 |
-| 02 | binder_sched_opt | **酷安** (Moon) | R2/R7.3 | binder 调度优化 (SF FIFO-98 + 运行时开关 + policy 白名单修复) |
+| 02 | binder_sched_opt | **JiuXia 自研**（社区启发起点，R7.6 完全重写） | R2/R7/R7.3/R7.6 | binder 调度优化（自有 transaction_received/restore_priority hook + 运行时开关） |
 | 03 | kshrink_slabd | **小米 piano** | R2/R7.4 | 异步 slab 回收（时间窗原子化修复） |
 | 04 | kshrink_lruvecd | 异步回收系列 | R2/R7.4 | 异步 lruvec 回收（NR_ISOLATED 记账 + MGLRU 接线） |
 | 05 | sew_audit LSM | **JiuXia 自研** | R3/R7.2/R7.3 | 模块加载阻断(前缀匹配, 含 /data/adb/modules 与 /system_dlkm) |
