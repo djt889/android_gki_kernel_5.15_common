@@ -26,6 +26,8 @@
 #include <linux/sched.h>
 #include <linux/sched/clock.h>
 #include <linux/delay.h>
+#include <linux/slab.h>
+#include <linux/task_work.h>
 #include <linux/cred.h>
 #include <linux/tracepoint.h>
 #include <trace/hooks/sched.h>
@@ -35,8 +37,8 @@ static unsigned int sew_penalty_target_fps = 60;
 /* 0..100 percent added on top of one frame period. */
 static unsigned int sew_penalty_headroom_pct = 10;
 
-static u64 sew_yield_count;
-static u64 sew_yield_sleep_ns;
+static atomic64_t sew_yield_count;
+static atomic64_t sew_yield_sleep_ns;
 
 /*
  * Android app uids: 10000..19999 (PER_USER_RANGE shifted by AID_APP_START).
@@ -55,9 +57,33 @@ static bool sew_penalty_uid_allowed(struct task_struct *t)
 	return val >= 10000 && val < 20000;
 }
 
+/*
+ * The penalty sleep runs here, in task_work context: tracepoint probes
+ * execute with preemption disabled (__DO_TRACE), so sleeping inside the
+ * probe itself would be a scheduling-while-atomic bug. task_work with
+ * TWA_RESUME runs on the way back to userspace, in plain task context.
+ */
+struct sew_penalty_work {
+	struct callback_head	work;
+	unsigned long		lo;
+	unsigned long		hi;
+};
+
+static void sew_penalty_do_sleep(struct callback_head *cb)
+{
+	struct sew_penalty_work *pw =
+		container_of(cb, struct sew_penalty_work, work);
+
+	usleep_range(pw->lo, pw->hi);
+	atomic64_inc(&sew_yield_count);
+	atomic64_add(pw->hi - pw->lo, &sew_yield_sleep_ns);
+	kfree(pw);
+}
+
 static void sew_penalty_before_yield(void *data, long *unused)
 {
 	struct task_struct *t = current;
+	struct sew_penalty_work *pw;
 	u64 frame_ns, lo, hi;
 
 	if (!sew_penalty_target_pid || !sew_penalty_target_fps)
@@ -67,18 +93,26 @@ static void sew_penalty_before_yield(void *data, long *unused)
 	if (!sew_penalty_uid_allowed(t))
 		return;
 
+	pw = kzalloc(sizeof(*pw), GFP_ATOMIC);
+	if (!pw)
+		return; /* no memory: let the normal yield happen */
+
 	frame_ns = div64_u64(NSEC_PER_SEC, sew_penalty_target_fps);
 	lo = div64_u64(frame_ns, 2);
 	hi = frame_ns + div64_u64(frame_ns * sew_penalty_headroom_pct, 100);
 	if (hi <= lo)
 		hi = lo + 1;
+	pw->lo = lo;
+	pw->hi = hi;
+	init_task_work(&pw->work, sew_penalty_do_sleep);
 
-	sew_yield_count++;
-	sew_yield_sleep_ns += hi - lo;
+	if (task_work_add(t, &pw->work, TWA_RESUME)) {
+		kfree(pw); /* task exiting: normal yield */
+		return;
+	}
 
-	/* Skip the yield; sleep half a frame up to one frame + headroom. */
+	/* Skip the in-kernel yield; the penalty sleeps at user return. */
 	*unused = 1;
-	usleep_range(lo, hi);
 }
 
 static ssize_t target_pid_store(struct kobject *kobj,
@@ -164,8 +198,9 @@ static ssize_t stats_show(struct kobject *kobj,
 			  struct kobj_attribute *attr, char *buf)
 {
 	return scnprintf(buf, PAGE_SIZE,
-			 "penalized_yields=%llu\nsleep_ns_total=%llu\n",
-			 sew_yield_count, sew_yield_sleep_ns);
+			 "penalized_yields=%lld\nsleep_ns_total=%lld\n",
+			 atomic64_read(&sew_yield_count),
+			 atomic64_read(&sew_yield_sleep_ns));
 }
 
 static struct kobj_attribute target_pid_attr =

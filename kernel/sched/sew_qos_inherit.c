@@ -33,48 +33,90 @@
 
 static pid_t sew_qi_vip_tgid;
 static unsigned int sew_qi_uclamp_min = SEW_QI_UCLAMP_MIN_DEFAULT;
-static u64 sew_qi_hinted_waits;
+static atomic64_t sew_qi_hinted_waits;
+
+/*
+ * Save/restore slots keyed by tid (not tgid): if the user re-points
+ * vip_tgid while a hinted task is still blocked, wait_end must still
+ * restore that task (reviewer finding). Bounded ring of slots; a full
+ * table refuses further hints rather than corrupting state.
+ *
+ * The uclamp_req write itself stays lock-free, mirroring the OS4
+ * original: a torn bitfield read self-corrects on the next bucket
+ * update, and rq aggregation catches up at the next enqueue/dequeue.
+ */
+#define SEW_QI_HINT_SLOTS 16
+struct sew_qi_hint {
+	int		tid;
+	unsigned int	prev_value;
+};
+static struct sew_qi_hint sew_qi_hints[SEW_QI_HINT_SLOTS];
+static DEFINE_SPINLOCK(sew_qi_hint_lock);
 
 static void sew_qi_wait_start(void *data, u32 flags, u32 bitset)
 {
 	struct task_struct *t = current;
+	unsigned long irqflags;
+	int i, slot = -1;
 
-	if (!sew_qi_vip_tgid)
-		return;
-	if (task_tgid_nr(t) != sew_qi_vip_tgid)
+	if (!sew_qi_vip_tgid || task_tgid_nr(t) != sew_qi_vip_tgid)
 		return;
 
-	sew_qi_hinted_waits++;
 	/*
-	 * Apply the floor while this waiter sleeps on the futex.
-	 * uclamp_bucket_id() is static in kernel/sched/core.c, so inline
-	 * the same mapping (see core.c:1328 in this tree).
+	 * Tracepoint probes run with preemption disabled, so only
+	 * non-sleeping work happens here (spinlock is fine).
 	 */
-	t->uclamp_req[UCLAMP_MIN].value = sew_qi_uclamp_min;
-	t->uclamp_req[UCLAMP_MIN].bucket_id =
-		min_t(unsigned int,
-		      sew_qi_uclamp_min / SEW_QI_BUCKET_DELTA,
-		      (unsigned int)(UCLAMP_BUCKETS - 1));
+	spin_lock_irqsave(&sew_qi_hint_lock, irqflags);
+	for (i = 0; i < SEW_QI_HINT_SLOTS; i++) {
+		if (sew_qi_hints[i].tid == t->pid) {
+			slot = i;
+			break;
+		}
+		if (slot < 0 && sew_qi_hints[i].tid == 0)
+			slot = i;
+	}
+	if (slot >= 0) {
+		sew_qi_hints[slot].tid = t->pid;
+		sew_qi_hints[slot].prev_value =
+			t->uclamp_req[UCLAMP_MIN].value;
+		/* uclamp_bucket_id() is core.c-static; same mapping inline. */
+		t->uclamp_req[UCLAMP_MIN].value = sew_qi_uclamp_min;
+		t->uclamp_req[UCLAMP_MIN].bucket_id =
+			min_t(unsigned int,
+			      sew_qi_uclamp_min / SEW_QI_BUCKET_DELTA,
+			      (unsigned int)(UCLAMP_BUCKETS - 1));
+		atomic64_inc(&sew_qi_hinted_waits);
+	}
+	spin_unlock_irqrestore(&sew_qi_hint_lock, irqflags);
 }
 
 static void sew_qi_wait_end(void *data, u32 flags, u32 bitset)
 {
 	struct task_struct *t = current;
+	unsigned long irqflags;
+	int i;
 
-	if (!sew_qi_vip_tgid)
-		return;
-	if (task_tgid_nr(t) != sew_qi_vip_tgid)
-		return;
-
-	/* Drop the hint on wake. */
-	t->uclamp_req[UCLAMP_MIN].value = 0;
-	t->uclamp_req[UCLAMP_MIN].bucket_id = 0;
+	spin_lock_irqsave(&sew_qi_hint_lock, irqflags);
+	for (i = 0; i < SEW_QI_HINT_SLOTS; i++) {
+		if (sew_qi_hints[i].tid == t->pid) {
+			t->uclamp_req[UCLAMP_MIN].value =
+				sew_qi_hints[i].prev_value;
+			t->uclamp_req[UCLAMP_MIN].bucket_id =
+				min_t(unsigned int,
+				      sew_qi_hints[i].prev_value / SEW_QI_BUCKET_DELTA,
+				      (unsigned int)(UCLAMP_BUCKETS - 1));
+			sew_qi_hints[i].tid = 0;
+			break;
+		}
+	}
+	spin_unlock_irqrestore(&sew_qi_hint_lock, irqflags);
 }
 
 static int sew_qi_proc_show(struct seq_file *m, void *v)
 {
-	seq_printf(m, "vip_tgid=%d\nuclamp_min=%u\nhinted_waits=%llu\n",
-		   sew_qi_vip_tgid, sew_qi_uclamp_min, sew_qi_hinted_waits);
+	seq_printf(m, "vip_tgid=%d\nuclamp_min=%u\nhinted_waits=%lld\n",
+		   sew_qi_vip_tgid, sew_qi_uclamp_min,
+		   atomic64_read(&sew_qi_hinted_waits));
 	return 0;
 }
 

@@ -5,9 +5,9 @@
  * in reclaim while a frame deadline is pending.
  *
  * Hook: android_vh_get_page_wmark (fires right after the fast-path mark
- * is computed for the current zone). The callback raises the mark for
- * sf_pid / scene_tid by a bounded amount so zone_watermark_fast() sees
- * a "wetter" zone for those callers only.
+ * is computed for the current zone). The callback LOWERS the mark for
+ * sf_pid / scene_tid by a bounded amount (at most half) so those
+ * callers may allocate from the reserve instead of stalling.
  *
  * The slab side (vh_shrink_slab_bypass) is NOT registered here: mm/slabd.c
  * consumes it already, and the VIP check is merged into its callback via
@@ -30,7 +30,7 @@
 static pid_t sew_unfair_sf_pid;
 static pid_t sew_unfair_scene_tid;
 
-/* Bounded relax: at most +50% of the current mark gap. */
+/* Bounded relax: at most 50% below the computed mark. */
 static unsigned int sew_unfair_relax_pct = 50;
 
 /*
@@ -51,16 +51,23 @@ static bool sew_unfairmem_is_vip(struct task_struct *t)
 static void sew_unfair_wmark(void *data, unsigned int alloc_flags,
 			     unsigned long *page_wmark)
 {
-	unsigned long mark, cap;
+	unsigned long mark, relaxed;
 
 	if (!page_wmark || !sew_unfairmem_is_vip(current))
 		return;
 
+	/*
+	 * Lower the bar, not raise it: __zone_watermark_ok() passes when
+	 * free pages exceed the mark, so a *smaller* mark lets the flagged
+	 * caller dip into the reserve instead of stalling. Raising it
+	 * would push them into the slowpath sooner (reviewer finding).
+	 * Bounded: never below half of the computed mark.
+	 */
 	mark = *page_wmark;
-	/* Only the fast-path marks (low/high/min of the zone). */
-	cap = mark + mult_frac(mark, sew_unfair_relax_pct, 100);
-	if (cap > mark)
-		*page_wmark = cap;
+	relaxed = mark - mult_frac(mark, sew_unfair_relax_pct, 100);
+	if (relaxed < mark / 2)
+		relaxed = mark / 2;
+	*page_wmark = relaxed;
 }
 
 static int sew_unfair_proc_show(struct seq_file *m, void *v)

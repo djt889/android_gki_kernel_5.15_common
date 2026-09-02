@@ -81,9 +81,11 @@ extern unsigned long shrink_slab(gfp_t gfp_mask, int nid,
 /*
  * Optional VIP check registered by the sew_unfairmem module (loaded
  * after boot). NULL means no module is present: nothing is exempted.
- * Written under module init/exit serialization, read on the reclaim
- * path — a stale-but-valid pointer only widens/narrows the exempt set
- * for the duration of a module load, which is benign.
+ * Safety of the clear-on-exit is NOT a "stale pointer is benign"
+ * argument: it comes from the module's exit path clearing the pointer
+ * first and then running tracepoint_synchronize_unregister(), which
+ * guarantees no probe is still executing by the time module memory
+ * goes away.
  */
 bool (*sew_slabd_vip_check)(struct task_struct *t);
 EXPORT_SYMBOL_GPL(sew_slabd_vip_check);
@@ -282,13 +284,17 @@ static void kshrink_slabd_bypass(void *data, gfp_t gfp_mask, int nid,
 				 bool *bypass)
 {
 	unsigned long prev, curr;
+	bool (*vip_check)(struct task_struct *t);
 
 	/*
 	 * sew_unfairmem VIP tasks (sf_pid / scene_tid): skip slab reclaim
 	 * entirely, synchronously, without queueing the async worker. This
 	 * is the single-consumer merge that avoids double registration.
+	 * Single READ_ONCE load: avoids the NULL-then-call race window of
+	 * a plain double read.
 	 */
-	if (sew_slabd_vip_check && sew_slabd_vip_check(current)) {
+	vip_check = READ_ONCE(sew_slabd_vip_check);
+	if (vip_check && vip_check(current)) {
 		*bypass = true;
 		return;
 	}

@@ -20,38 +20,40 @@
 #include <linux/sched.h>
 #include <trace/hooks/vmscan.h>
 
-static u64 sew_slowpath_total;
-static u64 sew_slowpath_highorder;
-static u64 sew_reclaim_end_calls;
-static u64 sew_reclaim_reclaimed_pages;
-static u64 sew_reclaim_zero_progress;
+static atomic64_t sew_slowpath_total;
+static atomic64_t sew_slowpath_highorder;
+static atomic64_t sew_reclaim_end_calls;
+static atomic64_t sew_reclaim_reclaimed_pages;
+static atomic64_t sew_reclaim_zero_progress;
 
 static void sew_mr_slowpath(void *data, gfp_t gfp_mask, unsigned int order)
 {
-	sew_slowpath_total++;
+	atomic64_inc(&sew_slowpath_total);
 	if (order > PAGE_ALLOC_COSTLY_ORDER)
-		sew_slowpath_highorder++;
+		atomic64_inc(&sew_slowpath_highorder);
 }
 
 static void sew_mr_reclaim_end(void *data, unsigned long nr_reclaimed)
 {
-	sew_reclaim_end_calls++;
-	sew_reclaim_reclaimed_pages += nr_reclaimed;
+	atomic64_inc(&sew_reclaim_end_calls);
+	atomic64_add(nr_reclaimed, &sew_reclaim_reclaimed_pages);
 	if (!nr_reclaimed)
-		sew_reclaim_zero_progress++;
+		atomic64_inc(&sew_reclaim_zero_progress);
 }
 
 static int sew_mr_proc_show(struct seq_file *m, void *v)
 {
 	seq_printf(m,
-		   "slowpath_total=%llu\n"
-		   "slowpath_highorder=%llu\n"
-		   "reclaim_end_calls=%llu\n"
-		   "reclaimed_pages=%llu\n"
-		   "zero_progress=%llu\n",
-		   sew_slowpath_total, sew_slowpath_highorder,
-		   sew_reclaim_end_calls, sew_reclaim_reclaimed_pages,
-		   sew_reclaim_zero_progress);
+		   "slowpath_total=%lld\n"
+		   "slowpath_highorder=%lld\n"
+		   "reclaim_end_calls=%lld\n"
+		   "reclaimed_pages=%lld\n"
+		   "zero_progress=%lld\n",
+		   atomic64_read(&sew_slowpath_total),
+		   atomic64_read(&sew_slowpath_highorder),
+		   atomic64_read(&sew_reclaim_end_calls),
+		   atomic64_read(&sew_reclaim_reclaimed_pages),
+		   atomic64_read(&sew_reclaim_zero_progress));
 	return 0;
 }
 
