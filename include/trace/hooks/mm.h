@@ -452,6 +452,17 @@ DECLARE_HOOK(android_vh_filemap_update_page,
 		struct file *file),
 	TP_ARGS(mapping, page, file));
 
+/*
+ * Lets a hook consumer adjust the watermark used by the allocation
+ * fast-path check (per-zone, per-allocation). Consumed by the
+ * unfairmem-style module to relax the mark for flagged callers
+ * (SurfaceFlinger / scene threads). Mirrors the Xiaomi 6.6 hook of the
+ * same name (dada-v-oss mm.h).
+ */
+DECLARE_HOOK(android_vh_get_page_wmark,
+	TP_PROTO(unsigned int alloc_flags, unsigned long *page_wmark),
+	TP_ARGS(alloc_flags, page_wmark));
+
 #endif /* _TRACE_HOOK_MM_H */
 
 /* This part must be outside protection */

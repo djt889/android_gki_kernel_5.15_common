@@ -601,3 +601,6 @@ EXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_task_mem);
 EXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_mm_free);
 EXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_mm_init);
 EXPORT_TRACEPOINT_SYMBOL_GPL(android_rvh_create_worker);
+EXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_get_page_wmark);
+EXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_alloc_pages_slowpath_start);
+EXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_direct_reclaim_end);

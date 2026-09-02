@@ -135,3 +135,4 @@ EXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_cpu_cgroup_css_alloc);
 EXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_cpu_cgroup_css_free);
 EXPORT_TRACEPOINT_SYMBOL_GPL(android_rvh_before_pick_task_fair);
 EXPORT_TRACEPOINT_SYMBOL_GPL(android_rvh_balance_fair);
+EXPORT_TRACEPOINT_SYMBOL_GPL(android_rvh_before_do_sched_yield);

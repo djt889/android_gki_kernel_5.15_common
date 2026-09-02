@@ -839,6 +839,35 @@ config GENERIC_SCHED_CLOCK
 
 menu "Scheduler features"
 
+config SEW_RTLOAD
+	tristate "Sew RT load observer (kprobe on __sched_setscheduler)"
+	depends on KPROBES && ARM64
+	default n
+	help
+	  Count SCHED_FIFO/SCHED_RR policy requests through a kprobe on
+	  __sched_setscheduler and expose the counters through
+	  /dev/sew_rtload. Observation only; no scheduling behavior is
+	  changed. (Module lives in kernel/sched/sew_rtload.c; the config
+	  sits with the Sew family because kernel/sched/ has no Kconfig of
+	  its own.)
+
+config SCHED_YIELD_PENALTY
+	tristate "Sew yield penalty"
+	depends on ANDROID_VENDOR_HOOKS
+	default n
+	help
+	  OS4 sched-penalty port: replace sched_yield() of a target task
+	  with a bounded sleep up to the next frame boundary. uid-gated
+	  (app range only), off by default.
+
+config SEW_QOS_INHERIT
+	tristate "Sew minimal futex QOS-inheritance"
+	depends on ANDROID_VENDOR_HOOKS
+	default n
+	help
+	  OS4 xr_qi reduced port: uclamp_min hint for futex waiters of a
+	  configured vip tgid. Lock-inheritance on the futex chain only.
+
 config UCLAMP_TASK
 	bool "Enable utilization clamping for RT/FAIR tasks"
 	depends on CPU_FREQ_GOV_SCHEDUTIL

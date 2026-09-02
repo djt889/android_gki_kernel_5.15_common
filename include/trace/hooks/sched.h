@@ -453,6 +453,17 @@ DECLARE_RESTRICTED_HOOK(android_rvh_balance_fair,
 	TP_PROTO(struct rq *rq, struct task_struct *prev, struct rq_flags *rf),
 	TP_ARGS(rq, prev, rf), 1);
 
+/*
+ * Allows a restricted hook consumer to skip the whole do_sched_yield()
+ * body (e.g. a yield-penalty module that replaces the yield with a
+ * bounded sleep). Mirrors the Xiaomi 6.6 hook of the same name
+ * (dada-v-oss sched.h). @unused keeps the ABI open for future payload;
+ * consumers signal "skip" by writing a non-zero value.
+ */
+DECLARE_RESTRICTED_HOOK(android_rvh_before_do_sched_yield,
+	TP_PROTO(long *unused),
+	TP_ARGS(unused), 1);
+
 struct cgroup_subsys_state;
 DECLARE_HOOK(android_vh_sched_move_task,
 	TP_PROTO(struct task_struct *tsk),

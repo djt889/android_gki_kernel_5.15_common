@@ -994,6 +994,31 @@ config SEW_MMAP_BYPASS
 	  Bypass direct-reclaim throttling for userspace tasks to reduce
 	  mmap allocation latency under memory pressure (Sew R7).
 
+config SEW_UNFAIRMEM
+	tristate "Sew unfairmem: bounded watermark relax for flagged tasks"
+	depends on ANDROID_VENDOR_HOOKS
+	default n
+	help
+	  OS4 unfairmem port: relax the allocation watermark for
+	  sf_pid/scene_tid (bounded), and have slabd skip slab reclaim
+	  for those tasks (single-consumer merge in mm/slabd.c).
+
+config SEW_MI_RECLAIM
+	tristate "Sew reclaim-path observability"
+	depends on ANDROID_VENDOR_HOOKS
+	default n
+	help
+	  OS4 mi_reclaim idea, observe-only first cut: counts slow-path
+	  entries and direct-reclaim outcomes via the new hooks.
+
+config SEW_DYNAMIC_READAHEAD
+	tristate "Sew dynamic readahead (per-uid)"
+	depends on ANDROID_VENDOR_HOOKS
+	default n
+	help
+	  OS4 dynamic_readahead reduced port: per-uid fault_around and
+	  readahead-window scale control.
+
 config MI_RMAP_EFFICIENCY
 	bool "MI rmap efficiency: protect high-mapcount pages"
 	default y
@@ -1012,5 +1037,28 @@ config SEW_ALLOC_ADJUST
 	  Drop __GFP_RECLAIM for high-order (order > PAGE_ALLOC_COSTLY_ORDER)
 	  DMA-IOMMU and kvmalloc allocations to reduce reclaim-induced jank
 	  under memory pressure (Sew R7).
+
+config SEW_SCENE_SWAPPINESS
+	tristate "Sew scene-based reclaim swappiness"
+	depends on ANDROID_VENDOR_HOOKS
+	default n
+	help
+	  Select the reclaim swappiness value by scene name written to
+	  /proc/sew_scene_swappiness/scene (default/game/camera/browser).
+	  Scene "default" is a strict passthrough that never modifies the
+	  hook value, preserving the vm.swappiness policy set by the
+	  additional modules.
+
+config SEW_RSS_MONITOR
+	tristate "Sew RSS/runtime monitor for a tgid allowlist"
+	depends on TRACEPOINTS
+	default n
+	help
+	  Observe RSS and accumulated runtime of a tgid allowlist through a
+	  dynamic probe on the sched_stat_runtime tracepoint. Tasks whose
+	  RSS crosses rss_threshold_kb are reported via ratelimited kernel
+	  logs; stats are readable from /dev/sew_rss_monitor. Observation
+	  only.
+
 
 endmenu

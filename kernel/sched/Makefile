@@ -39,3 +39,6 @@ obj-$(CONFIG_CPU_ISOLATION) += isolation.o
 obj-$(CONFIG_PSI) += psi.o
 obj-$(CONFIG_SCHED_CORE) += core_sched.o
 obj-$(CONFIG_ANDROID_VENDOR_HOOKS) += vendor_hooks.o
+obj-$(CONFIG_SEW_RTLOAD) += sew_rtload.o
+obj-$(CONFIG_SCHED_YIELD_PENALTY) += sew_yield_penalty.o
+obj-$(CONFIG_SEW_QOS_INHERIT) += sew_qos_inherit.o
