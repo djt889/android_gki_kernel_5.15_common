@@ -179,6 +179,8 @@ void bootprof_initcall(initcall_t fn, unsigned long long ts)
 
 #ifndef MODULE
 /*Build-in*/
+/* Sew note: exported but unused in-tree (the upstream driver-core
+ * hook was not carried over by this import); harmless dead export. */
 void bootprof_probe(unsigned long long ts, struct device *dev,
 			   struct device_driver *drv, unsigned long probe)
 {

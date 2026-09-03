@@ -48,8 +48,9 @@ struct sew_bm_event {
 };
 
 /*
- * Boot-event anchors (subset of the OS4 table; warntime not enforced —
- * this port records, it does not watchdog. Extend as needed.)
+ * Boot-event anchors (renamed table inspired by the OS4 original;
+ * warntime not enforced — this port records, it does not watchdog.
+ * Extend as needed.)
  */
 static const char * const sew_bm_anchor_names[] = {
 	"kernel-init",
@@ -74,8 +75,8 @@ static char sew_bm_fingerprint[128] = "unknown";
 module_param_string(fingerprint, sew_bm_fingerprint, sizeof(sew_bm_fingerprint), 0644);
 
 /*
- * Mirror the finalized event table into a pstore record so it survives
- * the next reboot (ramoops backend on this platform). Failure is
+ * Mirror the finalized event table into the kernel log ring so it survives
+ * the next reboot (console-ramoops tail on this platform). Failure is
  * non-fatal: the in-memory table remains readable via /proc.
  */
 static void sew_bm_pstore_flush(void)
@@ -194,16 +195,19 @@ static int __init sew_bootmonitor_init(void)
 static void __exit sew_bootmonitor_exit(void)
 {
 	/*
-	 * Partial-boot bailout: if we are unloaded before the last anchor
-	 * was hit (failed boot scenario), emit whatever was recorded so
-	 * the console-ramoops tail at least carries the partial table.
+	 * Partial-table bailout: if the module is unloaded (manual or
+	 * debug rmmod) before the last anchor was hit, emit whatever was
+	 * recorded so the console-ramoops tail at least carries it.
 	 */
-	if (atomic_read(&sew_bm_next) < SEW_BM_ANCHORS)
+	if (atomic_read(&sew_bm_next) < SEW_BM_ANCHORS) {
+		mutex_lock(&sew_bm_write_lock);
 		sew_bm_pstore_flush();
+		mutex_unlock(&sew_bm_write_lock);
+	}
 	remove_proc_entry("sew_bootmonitor", NULL);
 }
 
 module_init(sew_bootmonitor_init);
 module_exit(sew_bootmonitor_exit);
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("Sew boot-event blackbox (OS4 bootmonitor reduced port, pstore-backed)");
+MODULE_DESCRIPTION("Sew boot-event logger (OS4 bootmonitor reduced port, console-ramoops-tailed)");
