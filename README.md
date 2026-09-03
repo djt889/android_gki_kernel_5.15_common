@@ -1,8 +1,8 @@
-# JiuXia Kernel 修改整理（正式版 R1 → R6）
+# JiuXia Kernel 修改整理（正式版 R1 → R8）
 
 > 本分支（kernel-customizations-docs）按**特性**整理正式版（android13-5.15-lts-2026-07）相对基线 43f7d63d83ca 的全部修改。
 > 每个特性一个文件夹，含**修改过的完整代码文件** + 说明。排除 folio 实验分支。
-> 更新日期：2026-08-29 (R7.8)
+> 更新日期：2026-09-04 (R8)
 
 ## 目录结构
 
@@ -21,7 +21,10 @@
         ├── 09-base-fixes/
         ├── 10-zstdh/
         ├── 11-sew_mmap_bypass/
-        └── 12-sew_alloc_adjust/
+        ├── 12-sew_alloc_adjust/
+        ├── 13-os4port-sched/
+        ├── 14-os4port-mm/
+        └── 15-xiaomi-boottime/
 
 ## 特性总览
 
@@ -39,6 +42,14 @@
 | 10 | zstdh | Meta zstd 1.5.7 改名 | R6.3/R7 | zram 压缩后端 |
 | 11 | sew_mmap_bypass | 自研 | R7/R7.3/R7.4 | 回收节流旁路, R7.3 起按 cpuset 收窄至交互组 |
 | 12 | sew_alloc_adjust | Oplus kswapd_opt | R7 | 高阶分配去 __GFP_RECLAIM |
+| 13 | OS4 移植·调度 | MIUI OS4 (dada) 移植 | R8 | sew_yield_penalty / sew_qos_inherit / sew_rtload（默认 n）+ sched hook + task_work_add 导出 |
+| 14 | OS4 移植·内存 | MIUI OS4 (dada) 移植 | R8 | sew_unfairmem / sew_mi_reclaim / sew_scene_swappiness / sew_dynamic_readahead / sew_rss_monitor / sew_bootmonitor（默认 n）+ slabd 频率感知升级 + mm hook |
+| 15 | xiaomi boottime | MIUI dada-v-oss | R8 | MI_BOOT_TIME 开机耗时锚点（默认 n，开源树逐字移植） |
+
+## 版本演进（R7.9 → R8）
+
+- **R7.9**（2026-09-03）：FIX-001 boeffla wakelock blocker 三处 1 字节越界写修复；附加模块 v1.2.9（调度职责迁 sew-sched / 进程分组 / 冗余清理 / WebUI 重构）
+- **R8**（2026-09-03）：OS4 移植 wave1+wave2 合入（本表 13/14/15），全部默认 n，默认行为与 R7.9 零差异；附加模块 v1.3.0（R8 模块配套段 + WebUI R8 卡）
 
 ## 来源说明（重要）
 
