@@ -26,6 +26,9 @@ MAPPING=(
   "10-zstdh:crypto/zstdh.c crypto/Kconfig include/linux/zstdh.h include/linux/zstdh_errors.h include/linux/zstdh_lib.h lib/zstdh/"
   "11-sew_mmap_bypass:mm/sew_mmap_bypass.c include/trace/hooks/vmscan.h"
   "12-sew_alloc_adjust:mm/sew_alloc_adjust.c"
+  "13-os4port-sched:kernel/sched/sew_yield_penalty.c kernel/sched/sew_qos_inherit.c kernel/sched/sew_rtload.c kernel/sched/core.c kernel/sched/vendor_hooks.c kernel/sched/Makefile include/trace/hooks/sched.h kernel/task_work.c"
+  "14-os4port-mm:mm/sew_unfairmem.c mm/sew_mi_reclaim.c mm/sew_scene_swappiness.c mm/sew_dynamic_readahead.c mm/sew_rss_monitor.c mm/sew_bootmonitor.c mm/slabd.c mm/page_alloc.c mm/vmscan.c mm/Kconfig mm/Makefile include/trace/hooks/mm.h init/Kconfig"
+  "15-xiaomi-boottime:drivers/xiaomi/ drivers/Kconfig drivers/Makefile"
 )
 
 cd "$KERNEL"
