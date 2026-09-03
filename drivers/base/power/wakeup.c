@@ -627,7 +627,7 @@ static void wakeup_source_activate(struct wakeup_source *ws)
 // AP: Function to check if a wakelock is on the wakelock blocker list
 static bool check_for_block(struct wakeup_source *ws)
 {
-	char wakelock_name[52] = {0};
+	char wakelock_name[53] = {0};
 	int length;
 
 	// if debug mode on, print every wakelock requested
