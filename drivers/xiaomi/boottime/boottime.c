@@ -548,19 +548,26 @@ static void __exit bootprof_exit(void)
 
 	tp_deinit();
 
+	spin_lock(&bootprof_lock);
+	enabled = 0;
 	if (log_count > 0) {
-		spin_lock(&bootprof_lock);
-		enabled = 0;
 		for (i = 0; i < log_count; i++) {
 			p = &bootprof[i / LOGS_PER_BUF][i % LOGS_PER_BUF];
 			kfree(p->comm_event);
 		}
-
-		for (i = 0; i < ((log_count / LOGS_PER_BUF) + 1); i++)
-			kfree(bootprof[i]);
-
-		spin_unlock(&bootprof_lock);
 	}
+
+	/*
+	 * Sew note (upstream defect, fixed here): in module mode the
+	 * buffers are allocated at init but log_count stays 0 until an
+	 * event is logged, so the original conditional skipped the
+	 * kfree entirely — every rmmod leaked bootprof[0] (and the
+	 * whole chain once populated). Free unconditionally.
+	 */
+	for (i = 0; i < ((log_count / LOGS_PER_BUF) + 1); i++)
+		kfree(bootprof[i]);
+
+	spin_unlock(&bootprof_lock);
 	remove_proc_entry("bootprof", NULL);
 	pr_info("bootprof module exit.\n");
 }

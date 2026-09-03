@@ -1,25 +1,33 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * sew_bootmonitor: boot-event blackbox, reduced port of the Xiaomi OS4
+ * sew_bootmonitor: boot-event logger, reduced port of the Xiaomi OS4
  * bootmonitor module (drivers/xiaomi/bootmonitor in dada-v-oss).
  *
- * What is kept from the original: the boot-event anchor model (a fixed
- * table of named events with expected timings, recorded in order), the
- * in-memory ring of event records, and the bootmode/fingerprint
- * stamping from module params.
+ * What is kept from the original: the ordered boot-event anchor model
+ * and the bootmode/fingerprint stamping from module params. The anchor
+ * table below is a RENAMED, shorter table inspired by the original
+ * (the OS4 table is early-init/late-init/late-fs/zygote-start/.../
+ * boot_completed in boot_monitor.c:31-41); names here match what a
+ * GKI ramdisk init.rc can realistically report.
  *
  * What is deliberately NOT ported: the DT /reserved-memory resource
  * probe ("xiaomi,bootmonitor_pmsg" node absent on nuwa/vermeer/fuxi)
- * and the raw blackbox-partition block-device writer. Instead, the
- * event log is mirrored into the pstore ramoops backend when present:
- * each finalized boot pass writes a single "sew-bootmonitor" pstore
- * record, so the log survives a reboot exactly like the original
- * blackbox but through the platform's existing infrastructure
- * (R7.8 already enables PSTORE_PMSG/PSTORE_RAM).
+ * and the raw blackbox-partition block-device writer. Persistence is
+ * MUCH weaker than the original blackbox: the summary is emitted via
+ * pr_info into the kernel log ring, and console-ramoops (enabled in
+ * this kernel) persists only the TAIL of that ring across a reboot.
+ * In practice: a boot-loop or a reboot shortly after boot keeps the
+ * summary; a long-running session that reboots may have evicted it.
+ * A failed boot that never reaches the last anchor also produces no
+ * summary at all — the per-anchor hits are still visible in the
+ * console log itself.
  *
- * Interfaces: /proc/sew_bootmonitor (read the event table of the
- * current boot), module params bootmode/fingerprint (set from the
- * init.rc of the OS4-style ramdisk if desired).
+ * Built as a module the anchor timestamps are relative to modprobe
+ * time, not kernel start: use CONFIG_SEW_BOOTMONITOR=y for real
+ * kernel-relative timings.
+ *
+ * Interfaces: /proc/sew_bootmonitor (read the anchor table, write
+ * anchor names strictly in order), module params bootmode/fingerprint.
  */
 
 #include <linux/module.h>
@@ -80,13 +88,13 @@ static void sew_bm_pstore_flush(void)
 		return;
 
 	off = scnprintf(msg, PAGE_SIZE,
-			"sew-bootmonitor bootmode=%s fingerprint=%s\n",
+			"sew-bootmonitor: bootmode=%s fingerprint=%s\n",
 			sew_bm_bootmode, sew_bm_fingerprint);
 	for (i = 0; i < SEW_BM_ANCHORS && off < PAGE_SIZE - 64; i++) {
 		if (!sew_bm_events[i].status)
 			continue;
 		off += scnprintf(msg + off, PAGE_SIZE - off,
-				 "[%d] %-20s %10llu ns\n", i,
+				 "sew-bootmonitor: [%d] %-20s %10llu ns\n", i,
 				 sew_bm_anchor_names[i],
 				 sew_bm_events[i].ts_ns);
 	}
@@ -106,6 +114,11 @@ static void sew_bm_pstore_flush(void)
  * Record the next anchor in order. Writing an arbitrary name out of
  * order is rejected: anchors are sequential by design.
  */
+/* Serializes anchor writes; init is the only expected writer, but a
+ * stray second writer must not be able to double-advance the index.
+ */
+static DEFINE_MUTEX(sew_bm_write_lock);
+
 static ssize_t sew_bm_proc_write(struct file *file, const char __user *buf,
 				 size_t count, loff_t *ppos)
 {
@@ -120,15 +133,21 @@ static ssize_t sew_bm_proc_write(struct file *file, const char __user *buf,
 	if (tmp[count - 1] == '\n')
 		tmp[count - 1] = '\0';
 
+	mutex_lock(&sew_bm_write_lock);
 	idx = atomic_read(&sew_bm_next);
-	if (idx < 0 || idx >= SEW_BM_ANCHORS)
+	if (idx < 0 || idx >= SEW_BM_ANCHORS) {
+		mutex_unlock(&sew_bm_write_lock);
 		return -ENOSPC;
-	if (strcmp(tmp, sew_bm_anchor_names[idx]) != 0)
+	}
+	if (strcmp(tmp, sew_bm_anchor_names[idx]) != 0) {
+		mutex_unlock(&sew_bm_write_lock);
 		return -EINVAL; /* out-of-order or unknown anchor */
+	}
 
 	sew_bm_events[idx].ts_ns = ktime_get_boottime_ns() - sew_bm_boot_start_ns;
 	sew_bm_events[idx].status = 1;
 	atomic_inc(&sew_bm_next);
+	mutex_unlock(&sew_bm_write_lock);
 
 	if (idx == SEW_BM_ANCHORS - 1)
 		sew_bm_pstore_flush();
@@ -174,6 +193,13 @@ static int __init sew_bootmonitor_init(void)
 
 static void __exit sew_bootmonitor_exit(void)
 {
+	/*
+	 * Partial-boot bailout: if we are unloaded before the last anchor
+	 * was hit (failed boot scenario), emit whatever was recorded so
+	 * the console-ramoops tail at least carries the partial table.
+	 */
+	if (atomic_read(&sew_bm_next) < SEW_BM_ANCHORS)
+		sew_bm_pstore_flush();
 	remove_proc_entry("sew_bootmonitor", NULL);
 }
 

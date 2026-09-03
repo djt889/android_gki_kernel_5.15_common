@@ -1039,12 +1039,13 @@ config SEW_ALLOC_ADJUST
 	  under memory pressure (Sew R7).
 
 config SEW_BOOTMONITOR
-	tristate "Sew boot-event blackbox (OS4 bootmonitor reduced port)"
+	tristate "Sew boot-event logger (OS4 bootmonitor reduced port)"
 	default n
 	help
 	  Record ordered boot-event anchors and mirror the summary into
 	  the ramoops-persisted kernel log. /proc/sew_bootmonitor shows
-	  the current boot's table.
+	  the current boot's table. As a module the anchor timestamps
+	  are relative to modprobe time; say y for kernel-relative ones.
 
 config SEW_SCENE_SWAPPINESS
 	tristate "Sew scene-based reclaim swappiness"

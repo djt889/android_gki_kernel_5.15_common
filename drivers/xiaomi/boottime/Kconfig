@@ -7,4 +7,7 @@ config MI_BOOT_TIME
 	tristate "boot time record"
 	default n
 	help
-	This adds support for mi boot time.
+	This adds support for mi boot time. As a module the initcall
+	tracepoints have already fired before modprobe, so only the
+	/proc/bootprof write interface stays useful; say y to capture
+	kernel initcall timings.
