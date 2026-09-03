@@ -191,4 +191,8 @@ void task_work_run(void)
 		} while (work);
 	}
 }
+/* Sew experiment: module use (sew_yield_penalty TWA_RESUME deferral).
+ * NOTE: ksymtab addition — KMI re-audit required before any formal
+ * branch merge (experiment-branch exemption applies here).
+ */
 EXPORT_SYMBOL_GPL(task_work_add);

@@ -1038,6 +1038,14 @@ config SEW_ALLOC_ADJUST
 	  DMA-IOMMU and kvmalloc allocations to reduce reclaim-induced jank
 	  under memory pressure (Sew R7).
 
+config SEW_BOOTMONITOR
+	tristate "Sew boot-event blackbox (OS4 bootmonitor reduced port)"
+	default n
+	help
+	  Record ordered boot-event anchors and mirror the summary into
+	  the ramoops-persisted kernel log. /proc/sew_bootmonitor shows
+	  the current boot's table.
+
 config SEW_SCENE_SWAPPINESS
 	tristate "Sew scene-based reclaim swappiness"
 	depends on ANDROID_VENDOR_HOOKS

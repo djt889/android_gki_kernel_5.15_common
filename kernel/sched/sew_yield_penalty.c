@@ -110,6 +110,12 @@ static void sew_penalty_before_yield(void *data, long *unused)
 		kfree(pw); /* task exiting: normal yield */
 		return;
 	}
+	/*
+	 * Note: if the task is killed between here and its return to
+	 * userspace, exit_task_work() runs the penalty sleep in the
+	 * do_exit path — a legal process-context sleep that delays the
+	 * exit by at most one frame window (~18ms at 60fps).
+	 */
 
 	/* Skip the in-kernel yield; the penalty sleeps at user return. */
 	*unused = 1;

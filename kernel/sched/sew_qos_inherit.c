@@ -52,6 +52,7 @@ struct sew_qi_hint {
 };
 static struct sew_qi_hint sew_qi_hints[SEW_QI_HINT_SLOTS];
 static DEFINE_SPINLOCK(sew_qi_hint_lock);
+static atomic_t sew_qi_active_hints;
 
 static void sew_qi_wait_start(void *data, u32 flags, u32 bitset)
 {
@@ -79,6 +80,7 @@ static void sew_qi_wait_start(void *data, u32 flags, u32 bitset)
 		sew_qi_hints[slot].tid = t->pid;
 		sew_qi_hints[slot].prev_value =
 			t->uclamp_req[UCLAMP_MIN].value;
+		atomic_inc(&sew_qi_active_hints);
 		/* uclamp_bucket_id() is core.c-static; same mapping inline. */
 		t->uclamp_req[UCLAMP_MIN].value = sew_qi_uclamp_min;
 		t->uclamp_req[UCLAMP_MIN].bucket_id =
@@ -96,6 +98,10 @@ static void sew_qi_wait_end(void *data, u32 flags, u32 bitset)
 	unsigned long irqflags;
 	int i;
 
+	/* Fast exit: no hinted task in flight (common case). */
+	if (!atomic_read(&sew_qi_active_hints))
+		return;
+
 	spin_lock_irqsave(&sew_qi_hint_lock, irqflags);
 	for (i = 0; i < SEW_QI_HINT_SLOTS; i++) {
 		if (sew_qi_hints[i].tid == t->pid) {
@@ -106,6 +112,7 @@ static void sew_qi_wait_end(void *data, u32 flags, u32 bitset)
 				      sew_qi_hints[i].prev_value / SEW_QI_BUCKET_DELTA,
 				      (unsigned int)(UCLAMP_BUCKETS - 1));
 			sew_qi_hints[i].tid = 0;
+			atomic_dec(&sew_qi_active_hints);
 			break;
 		}
 	}

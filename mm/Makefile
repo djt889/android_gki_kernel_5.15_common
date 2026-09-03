@@ -140,4 +140,5 @@ obj-$(CONFIG_SEW_MI_RECLAIM) += sew_mi_reclaim.o
 obj-$(CONFIG_SEW_DYNAMIC_READAHEAD) += sew_dynamic_readahead.o
 obj-$(CONFIG_SEW_ALLOC_ADJUST) += sew_alloc_adjust.o
 obj-$(CONFIG_SEW_SCENE_SWAPPINESS) += sew_scene_swappiness.o
+obj-$(CONFIG_SEW_BOOTMONITOR) += sew_bootmonitor.o
 obj-$(CONFIG_SEW_RSS_MONITOR) += sew_rss_monitor.o
