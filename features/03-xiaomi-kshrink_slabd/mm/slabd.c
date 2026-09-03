@@ -79,6 +79,18 @@ extern unsigned long shrink_slab(gfp_t gfp_mask, int nid,
 				 struct mem_cgroup *memcg, int priority);
 
 /*
+ * Optional VIP check registered by the sew_unfairmem module (loaded
+ * after boot). NULL means no module is present: nothing is exempted.
+ * Safety of the clear-on-exit is NOT a "stale pointer is benign"
+ * argument: it comes from the module's exit path clearing the pointer
+ * first and then running tracepoint_synchronize_unregister(), which
+ * guarantees no probe is still executing by the time module memory
+ * goes away.
+ */
+bool (*sew_slabd_vip_check)(struct task_struct *t);
+EXPORT_SYMBOL_GPL(sew_slabd_vip_check);
+
+/*
  * Bind the worker to everything except the lowest-frequency cluster, the
  * same policy kshrink_lruvecd uses. Asynchronous memory reclaim is a
  * sustained load: leaving it on the little cores saturates them and drags
@@ -124,6 +136,55 @@ static void kshrink_slabd_set_affinity(void)
 		WRITE_ONCE(kshrink_slabd_affinity_done, true);
 }
 
+/*
+ * Frequency-aware shrink intensity (OS4 kshrink_slabd idea, conservative
+ * port): when the cluster this worker currently runs on sits at a high
+ * P-state the system is busy, so slab reclaim keeps the caller-provided
+ * priority; when it sits below the policy mid-point, the machine is
+ * likely idle and the pass can afford one step of a deeper scan (a
+ * smaller priority value makes shrink_slab() scan more). Only applies
+ * when the policy exposes at least four valid P-states, and the value
+ * never goes below half the default priority so the change stays
+ * bounded.
+ */
+static int kshrink_slabd_tune_priority(int priority)
+{
+	struct cpufreq_policy *policy;
+	unsigned int freq, min_freq, max_freq, steps = 0;
+	int i;
+
+	if (priority <= 0 || priority > DEF_PRIORITY)
+		return priority;
+
+	policy = cpufreq_cpu_get(smp_processor_id());
+	if (!policy)
+		return priority;
+
+	/*
+	 * Snapshot everything needed, then drop the policy reference.
+	 * 5.15 has no policy->table_len: the table ends with the
+	 * CPUFREQ_TABLE_END sentinel, so count entries up to it.
+	 */
+	freq = policy->cur;
+	min_freq = policy->cpuinfo.min_freq;
+	max_freq = policy->cpuinfo.max_freq;
+	if (policy->freq_table) {
+		for (i = 0; policy->freq_table[i].frequency != CPUFREQ_TABLE_END; i++) {
+			if (policy->freq_table[i].frequency != CPUFREQ_ENTRY_INVALID)
+				steps++;
+		}
+	}
+	cpufreq_cpu_put(policy);
+
+	if (steps < 4)
+		return priority;
+
+	if (freq > (min_freq + max_freq) / 2)
+		return priority;
+
+	return max(priority - 1, DEF_PRIORITY / 2);
+}
+
 static int kshrink_slabd(void *unused)
 {
 	/*
@@ -156,6 +217,7 @@ static int kshrink_slabd(void *unused)
 		if (!pending)
 			continue;
 
+		request.priority = kshrink_slabd_tune_priority(request.priority);
 		shrink_slab(request.gfp_mask, request.nid, request.memcg,
 			    request.priority);
 		if (request.memcg_pinned)
@@ -222,6 +284,20 @@ static void kshrink_slabd_bypass(void *data, gfp_t gfp_mask, int nid,
 				 bool *bypass)
 {
 	unsigned long prev, curr;
+	bool (*vip_check)(struct task_struct *t);
+
+	/*
+	 * sew_unfairmem VIP tasks (sf_pid / scene_tid): skip slab reclaim
+	 * entirely, synchronously, without queueing the async worker. This
+	 * is the single-consumer merge that avoids double registration.
+	 * Single READ_ONCE load: avoids the NULL-then-call race window of
+	 * a plain double read.
+	 */
+	vip_check = READ_ONCE(sew_slabd_vip_check);
+	if (vip_check && vip_check(current)) {
+		*bypass = true;
+		return;
+	}
 
 	if (!current_is_kswapd() &&
 	    current != READ_ONCE(kshrink_slabd_task) &&

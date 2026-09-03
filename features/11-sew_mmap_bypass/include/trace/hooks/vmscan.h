@@ -104,6 +104,19 @@ DECLARE_HOOK(android_vh_mglru_should_abort_scan,
 DECLARE_HOOK(android_vh_throttle_direct_reclaim_bypass,
 	TP_PROTO(bool *bypass),
 	TP_ARGS(bypass));
+
+/*
+ * Reclaim-path observability hooks (mirrors of the Xiaomi 6.6 hooks used
+ * by the OS4 mi_reclaim module; the 6.6 originals are not in the
+ * dada-v-oss headers, so these are self-designed with matching names and
+ * minimal payloads). Consumers default to observing only.
+ */
+DECLARE_HOOK(android_vh_alloc_pages_slowpath_start,
+	TP_PROTO(gfp_t gfp_mask, unsigned int order),
+	TP_ARGS(gfp_mask, order));
+DECLARE_HOOK(android_vh_direct_reclaim_end,
+	TP_PROTO(unsigned long nr_reclaimed),
+	TP_ARGS(nr_reclaimed));
 #endif /* _TRACE_HOOK_VMSCAN_H */
 /* This part must be outside protection */
 #include <trace/define_trace.h>
