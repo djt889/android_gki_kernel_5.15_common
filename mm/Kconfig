@@ -1070,4 +1070,31 @@ config RSS_MONITOR
 	  only.
 
 
+config PERF_ACTUATOR
+	tristate "Sew perf_actuator QoS dispatch bridge (dada OS4 port)"
+	default n
+	help
+	  Rewrite of the Xiaomi dada OS4 perf_actuator.ko QoS bridge.
+	  Exposes two misc devices, /dev/xr_perf_actuator and /dev/xr_fbt,
+	  which dispatch userspace ioctls (magic type 0x78) to callback
+	  tables filled by kernel modules through register_perf_actuator(),
+	  unregister_perf_actuator(), register_xr_fbt() and
+	  unregister_xr_fbt(). Say n if you do not need the dada QoS
+	  actuator bridge.
+
+config PLAT_COMMON
+	tristate "Sew OS4 platform hook dispatch library (plat_common)"
+	depends on ANDROID_VENDOR_HOOKS
+	default n
+	help
+	  Port of the Xiaomi dada OS4 plat_common.ko "OS-CPU Platform Hook"
+	  dispatch library. Keeps the original Xiaomi plat_* exported symbol
+	  names and the 36-slot register/unregister_plat_func() registry that
+	  dada provider modules (rtg / sched-walt / mi_game) plug into. With
+	  no provider registered every plat_* call returns its reverse
+	  -engineered default, and an android_rvh_finish_prio_fork probe
+	  restores forked tasks' timer slack. Say n unless you also port the
+	  dada provider modules.
+
+
 endmenu

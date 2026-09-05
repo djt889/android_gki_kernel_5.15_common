@@ -142,3 +142,5 @@ obj-$(CONFIG_SEW_ALLOC_ADJUST) += sew_alloc_adjust.o
 obj-$(CONFIG_SCENE_SWAPPINESS) += scene_swappiness.o
 obj-$(CONFIG_BOOTMONITOR) += bootmonitor.o
 obj-$(CONFIG_RSS_MONITOR) += rss_monitor.o
+obj-$(CONFIG_PERF_ACTUATOR) += perf_actuator.o
+obj-$(CONFIG_PLAT_COMMON) += plat_common.o
