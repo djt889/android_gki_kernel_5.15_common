@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * sew_dynamic_readahead: per-uid control of fault-around and readahead
+ * dynamic_readahead: per-uid control of fault-around and readahead
  * scale, reduced port of the Xiaomi OS4 dynamic_readahead module
  * (ra_order bypass deliberately not ported; see plan T-007).
  *
@@ -63,7 +63,7 @@ static void sew_ra_max_page(void *data, struct readahead_control *ractl,
 	*max_pages = scaled;
 }
 
-static int __init sew_dynamic_readahead_init(void)
+static int __init dynamic_readahead_init(void)
 {
 	int ret;
 
@@ -81,7 +81,7 @@ static int __init sew_dynamic_readahead_init(void)
 	return 0;
 }
 
-static void __exit sew_dynamic_readahead_exit(void)
+static void __exit dynamic_readahead_exit(void)
 {
 	unregister_trace_android_vh_should_fault_around(
 		sew_ra_fault_around, NULL);
@@ -90,8 +90,8 @@ static void __exit sew_dynamic_readahead_exit(void)
 	tracepoint_synchronize_unregister();
 }
 
-module_init(sew_dynamic_readahead_init);
-module_exit(sew_dynamic_readahead_exit);
+module_init(dynamic_readahead_init);
+module_exit(dynamic_readahead_exit);
 
 module_param_named(enable, sew_ra_enable, bool, 0644);
 MODULE_PARM_DESC(enable, "enable dynamic readahead overrides (default false)");

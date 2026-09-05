@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * sew_unfairmem: relax the allocation watermark for flagged tasks so the
+ * unfair_mem: relax the allocation watermark for flagged tasks so the
  * renderer / scene threads can dip into the reserve instead of stalling
  * in reclaim while a frame deadline is pending.
  *
@@ -11,7 +11,7 @@
  *
  * The slab side (vh_shrink_slab_bypass) is NOT registered here: mm/slabd.c
  * consumes it already, and the VIP check is merged into its callback via
- * sew_unfairmem_is_vip() below (single-consumer discipline; avoids the
+ * unfair_mem_is_vip() below (single-consumer discipline; avoids the
  * double-registration async residue).
  *
  * Port of the Xiaomi OS4 unfairmem module idea ("adjust min watermark
@@ -38,7 +38,7 @@ static unsigned int sew_unfair_relax_pct = 50;
  * function pointer (slabd is built-in; direct symbol reference would
  * not link when this is a module).
  */
-static bool sew_unfairmem_is_vip(struct task_struct *t)
+static bool unfair_mem_is_vip(struct task_struct *t)
 {
 	if (!t)
 		return false;
@@ -53,7 +53,7 @@ static void sew_unfair_wmark(void *data, unsigned int alloc_flags,
 {
 	unsigned long mark, relaxed;
 
-	if (!page_wmark || !sew_unfairmem_is_vip(current))
+	if (!page_wmark || !unfair_mem_is_vip(current))
 		return;
 
 	/*
@@ -141,30 +141,30 @@ static const struct proc_ops sew_unfair_proc_ops = {
 
 extern bool (*sew_slabd_vip_check)(struct task_struct *t);
 
-static int __init sew_unfairmem_init(void)
+static int __init unfair_mem_init(void)
 {
 	int ret;
 
-	if (!proc_create("sew_unfairmem", 0644, NULL, &sew_unfair_proc_ops))
+	if (!proc_create("unfair_mem", 0644, NULL, &sew_unfair_proc_ops))
 		return -ENOMEM;
 	ret = register_trace_android_vh_get_page_wmark(sew_unfair_wmark, NULL);
 	if (ret) {
-		remove_proc_entry("sew_unfairmem", NULL);
+		remove_proc_entry("unfair_mem", NULL);
 		return ret;
 	}
-	WRITE_ONCE(sew_slabd_vip_check, sew_unfairmem_is_vip);
+	WRITE_ONCE(sew_slabd_vip_check, unfair_mem_is_vip);
 	return 0;
 }
 
-static void __exit sew_unfairmem_exit(void)
+static void __exit unfair_mem_exit(void)
 {
 	WRITE_ONCE(sew_slabd_vip_check, NULL);
 	unregister_trace_android_vh_get_page_wmark(sew_unfair_wmark, NULL);
 	tracepoint_synchronize_unregister();
-	remove_proc_entry("sew_unfairmem", NULL);
+	remove_proc_entry("unfair_mem", NULL);
 }
 
-module_init(sew_unfairmem_init);
-module_exit(sew_unfairmem_exit);
+module_init(unfair_mem_init);
+module_exit(unfair_mem_exit);
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Sew unfairmem: bounded watermark relax for flagged (sf/scene) tasks");

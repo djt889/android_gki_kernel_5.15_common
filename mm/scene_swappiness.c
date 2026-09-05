@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * sew_scene_swappiness: select the reclaim swappiness value by scene.
+ * scene_swappiness: select the reclaim swappiness value by scene.
  *
  * Hooks android_vh_tune_swappiness, which fires at both swappiness
  * decision points in mm/vmscan.c (classic-LRU get_scan_count() and the
@@ -8,8 +8,8 @@
  * a callback may rewrite it in place or leave it untouched.
  *
  * The scene is selected by writing its name to
- * /proc/sew_scene_swappiness/scene ("default"/"game"/"camera"/"browser");
- * hook counters are in /proc/sew_scene_swappiness/stats.
+ * /proc/scene_swappiness/scene ("default"/"game"/"camera"/"browser");
+ * hook counters are in /proc/scene_swappiness/stats.
  *
  * PASSTHROUGH CONTRACT: scene "default" (the boot state) must never
  * write *swappiness. The additional modules set vm.swappiness=1 as the
@@ -143,12 +143,12 @@ static const struct proc_ops sew_stats_proc_ops = {
 
 static struct proc_dir_entry *sew_proc_dir;
 
-static int __init sew_scene_swappiness_init(void)
+static int __init scene_swappiness_init(void)
 {
 	int ret;
 
 	ret = -ENOMEM;
-	sew_proc_dir = proc_mkdir("sew_scene_swappiness", NULL);
+	sew_proc_dir = proc_mkdir("scene_swappiness", NULL);
 	if (!sew_proc_dir)
 		return ret;
 
@@ -161,27 +161,27 @@ static int __init sew_scene_swappiness_init(void)
 	if (ret)
 		goto err_proc;
 
-	pr_info("sew_scene_swappiness: registered (scene=default, passthrough)\n");
+	pr_info("scene_swappiness: registered (scene=default, passthrough)\n");
 	return 0;
 
 err_proc:
-	remove_proc_subtree("sew_scene_swappiness", NULL);
+	remove_proc_subtree("scene_swappiness", NULL);
 	return ret;
 }
 
-static void __exit sew_scene_swappiness_exit(void)
+static void __exit scene_swappiness_exit(void)
 {
 	unregister_trace_android_vh_tune_swappiness(sew_tune_swappiness,
 						    NULL);
 	/* guarantee no CPU is still inside our callback before the code
 	 * goes away */
 	tracepoint_synchronize_unregister();
-	remove_proc_subtree("sew_scene_swappiness", NULL);
-	pr_info("sew_scene_swappiness: unregistered\n");
+	remove_proc_subtree("scene_swappiness", NULL);
+	pr_info("scene_swappiness: unregistered\n");
 }
 
-module_init(sew_scene_swappiness_init);
-module_exit(sew_scene_swappiness_exit);
+module_init(scene_swappiness_init);
+module_exit(scene_swappiness_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Sew scene-based reclaim swappiness tuning");

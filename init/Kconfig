@@ -839,7 +839,7 @@ config GENERIC_SCHED_CLOCK
 
 menu "Scheduler features"
 
-config SEW_RTLOAD
+config RT_MOD
 	tristate "Sew RT load observer (kprobe on __sched_setscheduler)"
 	depends on KPROBES && ARM64
 	default n
@@ -851,7 +851,7 @@ config SEW_RTLOAD
 	  sits with the Sew family because kernel/sched/ has no Kconfig of
 	  its own.)
 
-config SCHED_YIELD_PENALTY
+config SCHED_PENALTY
 	tristate "Sew yield penalty"
 	depends on ANDROID_VENDOR_HOOKS
 	default n
@@ -860,7 +860,7 @@ config SCHED_YIELD_PENALTY
 	  with a bounded sleep up to the next frame boundary. uid-gated
 	  (app range only), off by default.
 
-config SEW_QOS_INHERIT
+config XR_QI
 	tristate "Sew minimal futex QOS-inheritance"
 	depends on ANDROID_VENDOR_HOOKS
 	default n

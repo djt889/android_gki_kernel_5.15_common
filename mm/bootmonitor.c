@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * sew_bootmonitor: boot-event logger, reduced port of the Xiaomi OS4
+ * bootmonitor: boot-event logger, reduced port of the Xiaomi OS4
  * bootmonitor module (drivers/xiaomi/bootmonitor in dada-v-oss).
  *
  * What is kept from the original: the ordered boot-event anchor model
@@ -23,10 +23,10 @@
  * console log itself.
  *
  * Built as a module the anchor timestamps are relative to modprobe
- * time, not kernel start: use CONFIG_SEW_BOOTMONITOR=y for real
+ * time, not kernel start: use CONFIG_BOOTMONITOR=y for real
  * kernel-relative timings.
  *
- * Interfaces: /proc/sew_bootmonitor (read the anchor table, write
+ * Interfaces: /proc/bootmonitor (read the anchor table, write
  * anchor names strictly in order), module params bootmode/fingerprint.
  */
 
@@ -184,15 +184,15 @@ static const struct proc_ops sew_bm_proc_ops = {
 	.proc_write	= sew_bm_proc_write,
 };
 
-static int __init sew_bootmonitor_init(void)
+static int __init bootmonitor_init(void)
 {
 	sew_bm_boot_start_ns = ktime_get_boottime_ns();
-	if (!proc_create("sew_bootmonitor", 0644, NULL, &sew_bm_proc_ops))
+	if (!proc_create("bootmonitor", 0644, NULL, &sew_bm_proc_ops))
 		return -ENOMEM;
 	return 0;
 }
 
-static void __exit sew_bootmonitor_exit(void)
+static void __exit bootmonitor_exit(void)
 {
 	/*
 	 * Partial-table bailout: if the module is unloaded (manual or
@@ -204,10 +204,10 @@ static void __exit sew_bootmonitor_exit(void)
 		sew_bm_pstore_flush();
 		mutex_unlock(&sew_bm_write_lock);
 	}
-	remove_proc_entry("sew_bootmonitor", NULL);
+	remove_proc_entry("bootmonitor", NULL);
 }
 
-module_init(sew_bootmonitor_init);
-module_exit(sew_bootmonitor_exit);
+module_init(bootmonitor_init);
+module_exit(bootmonitor_exit);
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Sew boot-event logger (OS4 bootmonitor reduced port, console-ramoops-tailed)");

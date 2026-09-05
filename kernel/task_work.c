@@ -191,7 +191,7 @@ void task_work_run(void)
 		} while (work);
 	}
 }
-/* Sew experiment: module use (sew_yield_penalty TWA_RESUME deferral).
+/* Sew experiment: module use (sched_penalty TWA_RESUME deferral).
  * NOTE: ksymtab addition — KMI re-audit required before any formal
  * branch merge (experiment-branch exemption applies here).
  */

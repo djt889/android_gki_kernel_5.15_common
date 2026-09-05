@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * sew_rss_monitor: observe RSS and accumulated runtime of a tgid
+ * rss_monitor: observe RSS and accumulated runtime of a tgid
  * allowlist via a dynamic probe on the "sched_stat_runtime" tracepoint
  * (located by name with for_each_kernel_tracepoint; chosen over
  * sched_switch because it provides the per-task runtime delta directly,
@@ -13,9 +13,9 @@
  * tgid_list keeps the callback at one zero-entry scan (idle).
  *
  * Controls: tgid_list (comma-separated pids; writable at
- * /sys/module/sew_rss_monitor/parameters/tgid_list, rewritable at
+ * /sys/module/rss_monitor/parameters/tgid_list, rewritable at
  * runtime, resets stats), rss_threshold_kb, sample_ms. Stats are read
- * from /dev/sew_rss_monitor.
+ * from /dev/rss_monitor.
  */
 
 #include <linux/module.h>
@@ -197,7 +197,7 @@ static void sew_sched_stat_runtime_probe(void *data, struct task_struct *p,
 		if (rss_kb > sew_rss_threshold_kb) {
 			atomic64_inc(&e->reports);
 			printk_ratelimited(KERN_INFO
-				"sew_rss_monitor: tgid=%d comm=%s pid=%d "
+				"rss_monitor: tgid=%d comm=%s pid=%d "
 				"rss=%luKB runtime=%llums threshold=%luKB\n",
 				tgid, p->comm, p->pid, rss_kb,
 				(unsigned long long)div64_u64(
@@ -252,41 +252,41 @@ static const struct file_operations sew_rss_fops = {
 
 static struct miscdevice sew_rss_misc = {
 	.minor = MISC_DYNAMIC_MINOR,
-	.name = "sew_rss_monitor",
+	.name = "rss_monitor",
 	.fops = &sew_rss_fops,
 };
 
-static int __init sew_rss_monitor_init(void)
+static int __init rss_monitor_init(void)
 {
 	int ret;
 
 	for_each_kernel_tracepoint(sew_find_stat_runtime_tp, NULL);
 	if (!sew_stat_runtime_tp) {
-		pr_err("sew_rss_monitor: sched_stat_runtime tracepoint not found\n");
+		pr_err("rss_monitor: sched_stat_runtime tracepoint not found\n");
 		return -ENOENT;
 	}
 
 	ret = misc_register(&sew_rss_misc);
 	if (ret) {
-		pr_err("sew_rss_monitor: misc_register failed: %d\n", ret);
+		pr_err("rss_monitor: misc_register failed: %d\n", ret);
 		return ret;
 	}
 
 	ret = tracepoint_probe_register(sew_stat_runtime_tp,
 					sew_sched_stat_runtime_probe, NULL);
 	if (ret) {
-		pr_err("sew_rss_monitor: tracepoint probe registration failed: %d\n",
+		pr_err("rss_monitor: tracepoint probe registration failed: %d\n",
 			ret);
 		misc_deregister(&sew_rss_misc);
 		return ret;
 	}
 
-	pr_info("sew_rss_monitor: armed, %d tgid(s), threshold %luKB\n",
+	pr_info("rss_monitor: armed, %d tgid(s), threshold %luKB\n",
 		sew_tgid_count, sew_rss_threshold_kb);
 	return 0;
 }
 
-static void __exit sew_rss_monitor_exit(void)
+static void __exit rss_monitor_exit(void)
 {
 	tracepoint_probe_unregister(sew_stat_runtime_tp,
 				    sew_sched_stat_runtime_probe, NULL);
@@ -295,11 +295,11 @@ static void __exit sew_rss_monitor_exit(void)
 	tracepoint_synchronize_unregister();
 	misc_deregister(&sew_rss_misc);
 	sew_stat_runtime_tp = NULL;
-	pr_info("sew_rss_monitor: unregistered\n");
+	pr_info("rss_monitor: unregistered\n");
 }
 
-module_init(sew_rss_monitor_init);
-module_exit(sew_rss_monitor_exit);
+module_init(rss_monitor_init);
+module_exit(rss_monitor_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Sew RSS/runtime monitor for a tgid allowlist");

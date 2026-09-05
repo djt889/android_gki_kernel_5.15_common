@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * sew_qos_inherit: minimal QOS-inheritance on the futex wait chain,
+ * xr_qi: minimal QOS-inheritance on the futex wait chain,
  * reduced port of the Xiaomi OS4 xr_qi module idea ("MI QOS inherit
  * Driver": propagate importance from a lock holder to waiters).
  *
@@ -177,7 +177,7 @@ static const struct proc_ops sew_qi_proc_ops = {
 	.proc_write	= sew_qi_proc_write,
 };
 
-static int __init sew_qos_inherit_init(void)
+static int __init xr_qi_init(void)
 {
 	int ret;
 
@@ -189,7 +189,7 @@ static int __init sew_qos_inherit_init(void)
 		unregister_trace_android_vh_futex_wait_start(sew_qi_wait_start, NULL);
 		return ret;
 	}
-	if (!proc_create("sew_qos_inherit", 0644, NULL, &sew_qi_proc_ops)) {
+	if (!proc_create("xr_qi", 0644, NULL, &sew_qi_proc_ops)) {
 		unregister_trace_android_vh_futex_wait_start(sew_qi_wait_start, NULL);
 		unregister_trace_android_vh_futex_wait_end(sew_qi_wait_end, NULL);
 		return -ENOMEM;
@@ -197,15 +197,15 @@ static int __init sew_qos_inherit_init(void)
 	return 0;
 }
 
-static void __exit sew_qos_inherit_exit(void)
+static void __exit xr_qi_exit(void)
 {
 	unregister_trace_android_vh_futex_wait_start(sew_qi_wait_start, NULL);
 	unregister_trace_android_vh_futex_wait_end(sew_qi_wait_end, NULL);
 	tracepoint_synchronize_unregister();
-	remove_proc_entry("sew_qos_inherit", NULL);
+	remove_proc_entry("xr_qi", NULL);
 }
 
-module_init(sew_qos_inherit_init);
-module_exit(sew_qos_inherit_exit);
+module_init(xr_qi_init);
+module_exit(xr_qi_exit);
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Sew minimal futex QOS-inheritance (xr_qi reduced port, uclamp hint only)");

@@ -101,7 +101,7 @@ extern unsigned long shrink_slab(gfp_t gfp_mask, int nid,
 				 struct mem_cgroup *memcg, int priority);
 
 /*
- * Optional VIP check registered by the sew_unfairmem module (loaded
+ * Optional VIP check registered by the unfairmem module (loaded
  * after boot). NULL means no module is present: nothing is exempted.
  * Safety of the clear-on-exit is NOT a "stale pointer is benign"
  * argument: it comes from the module's exit path clearing the pointer
@@ -109,8 +109,8 @@ extern unsigned long shrink_slab(gfp_t gfp_mask, int nid,
  * guarantees no probe is still executing by the time module memory
  * goes away.
  */
-bool (*sew_slabd_vip_check)(struct task_struct *t);
-EXPORT_SYMBOL_GPL(sew_slabd_vip_check);
+bool (*slabd_vip_check)(struct task_struct *t);
+EXPORT_SYMBOL_GPL(slabd_vip_check);
 
 /*
  * Bind the worker to everything except the lowest-frequency cluster, the
@@ -318,13 +318,13 @@ static void kshrink_slabd_bypass(void *data, gfp_t gfp_mask, int nid,
 	bool (*vip_check)(struct task_struct *t);
 
 	/*
-	 * sew_unfairmem VIP tasks (sf_pid / scene_tid): skip slab reclaim
+	 * unfairmem VIP tasks (sf_pid / scene_tid): skip slab reclaim
 	 * entirely, synchronously, without queueing the async worker. This
 	 * is the single-consumer merge that avoids double registration.
 	 * Single READ_ONCE load: avoids the NULL-then-call race window of
 	 * a plain double read.
 	 */
-	vip_check = READ_ONCE(sew_slabd_vip_check);
+	vip_check = READ_ONCE(slabd_vip_check);
 	if (vip_check && vip_check(current)) {
 		*bypass = true;
 		return;

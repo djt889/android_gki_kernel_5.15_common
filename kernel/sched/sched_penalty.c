@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * sew_yield_penalty: penalize sched_yield() from a designated task so an
+ * sched_penalty: penalize sched_yield() from a designated task so an
  * untimely yield cannot push a frame-critical thread to the back of the
  * run queue. The penalty replaces the yield with a bounded sleep up to
  * the next frame boundary (target_fps derived frame_time scaled by
@@ -229,7 +229,7 @@ ATTRIBUTE_GROUPS(sew_penalty);
 
 static struct kobject *sew_penalty_kobj;
 
-static int __init sew_yield_penalty_init(void)
+static int __init sched_penalty_init(void)
 {
 	int ret;
 
@@ -257,7 +257,7 @@ static int __init sew_yield_penalty_init(void)
 	return 0;
 }
 
-static void __exit sew_yield_penalty_exit(void)
+static void __exit sched_penalty_exit(void)
 {
 	tracepoint_probe_unregister(
 		&__tracepoint_android_rvh_before_do_sched_yield,
@@ -269,7 +269,7 @@ static void __exit sew_yield_penalty_exit(void)
 	}
 }
 
-module_init(sew_yield_penalty_init);
-module_exit(sew_yield_penalty_exit);
+module_init(sched_penalty_init);
+module_exit(sched_penalty_exit);
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Sew yield penalty: bounded-sleep replacement for sched_yield of a target task");

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * sew_mi_reclaim: reclaim-path observability, conservative port of the
+ * mi_reclaim: reclaim-path observability, conservative port of the
  * Xiaomi OS4 mi_reclaim module idea ("Memory reclaim optimization").
  *
  * This first cut is observe-only: it counts slow-path entries and
@@ -69,7 +69,7 @@ static const struct proc_ops sew_mr_proc_ops = {
 	.proc_release	= single_release,
 };
 
-static int __init sew_mi_reclaim_init(void)
+static int __init mi_reclaim_init(void)
 {
 	int ret;
 
@@ -84,7 +84,7 @@ static int __init sew_mi_reclaim_init(void)
 			sew_mr_slowpath, NULL);
 		return ret;
 	}
-	if (!proc_create("sew_mi_reclaim", 0444, NULL, &sew_mr_proc_ops)) {
+	if (!proc_create("mi_reclaim", 0444, NULL, &sew_mr_proc_ops)) {
 		unregister_trace_android_vh_alloc_pages_slowpath_start(
 			sew_mr_slowpath, NULL);
 		unregister_trace_android_vh_direct_reclaim_end(
@@ -94,17 +94,17 @@ static int __init sew_mi_reclaim_init(void)
 	return 0;
 }
 
-static void __exit sew_mi_reclaim_exit(void)
+static void __exit mi_reclaim_exit(void)
 {
 	unregister_trace_android_vh_alloc_pages_slowpath_start(
 		sew_mr_slowpath, NULL);
 	unregister_trace_android_vh_direct_reclaim_end(
 		sew_mr_reclaim_end, NULL);
 	tracepoint_synchronize_unregister();
-	remove_proc_entry("sew_mi_reclaim", NULL);
+	remove_proc_entry("mi_reclaim", NULL);
 }
 
-module_init(sew_mi_reclaim_init);
-module_exit(sew_mi_reclaim_exit);
+module_init(mi_reclaim_init);
+module_exit(mi_reclaim_exit);
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Sew reclaim-path observability (mi_reclaim idea, observe-only first cut)");
