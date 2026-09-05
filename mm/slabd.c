@@ -9,10 +9,10 @@
  *    com.miui.home) have their shrink_slab() call bypassed and dropped
  *    synchronously; only kswapd, the worker itself, and callers with a
  *    non-zero oom_score_adj reach the async path;
- *  - hook-side throttle (diff_jiffies < HZ*1) before waking the worker;
- *  - even when the single pending slot is already occupied, *bypass is
- *    still set and the request is dropped (the original ignores the
- *    wakeup_shrink_slabd return value);
+ *  - hook-side throttle (diff_jiffies < throttle window, tunable in ms)
+ *    before waking the worker;
+ *  - even when the 4-deep ring is already full, *bypass is still set and
+ *    the request is dropped (the original ignored the queue return value);
  *  - the worker runs with PF_MEMALLOC | PF_KSWAPD and is affined to the
  *    NODE0 cpumask minus the related CPUs of the highest-frequency
  *    cpufreq policy (cpuinfo.max_freq), as in set_async_slabd_cpus();
@@ -60,13 +60,22 @@ struct kshrink_slabd_request {
 
 static DEFINE_SPINLOCK(kshrink_slabd_lock);
 static DECLARE_WAIT_QUEUE_HEAD(kshrink_slabd_wait);
-static struct kshrink_slabd_request kshrink_slabd_request;
+/*
+ * R8.1: the original single pending slot became a 4-deep ring. One wake
+ * of the worker now drains everything queued since the last pass, which
+ * cuts the drop rate under reclaim bursts and raises async throughput.
+ * head/tail are free-running counters; tail - head is the occupancy.
+ */
+#define KSHRINK_SLABD_RING	4
+static struct kshrink_slabd_request kshrink_slabd_ring[KSHRINK_SLABD_RING];
+static unsigned int kshrink_slabd_head;
+static unsigned int kshrink_slabd_tail;
 static struct task_struct *kshrink_slabd_task;
-static bool kshrink_slabd_pending;
 static bool kshrink_slabd_enabled;
 static bool kshrink_slabd_affinity_done;
 static unsigned long kshrink_slabd_queued;
 static unsigned long kshrink_slabd_completed;
+static unsigned long kshrink_slabd_dropped;
 /*
  * Throttle timestamp, seeded with jiffies at init: jiffies starts at
  * INITIAL_JIFFIES on arm64, so a zero seed makes the first difference huge
@@ -74,6 +83,19 @@ static unsigned long kshrink_slabd_completed;
  * when it should still run synchronously.
  */
 static unsigned long kshrink_slabd_prev_jiffies;
+static unsigned long kshrink_slabd_throttled;
+
+/*
+ * Throttle window in milliseconds, default 1000 (= the historical HZ*1
+ * behaviour). A request arriving inside the window is not deferred to the
+ * worker: the caller shrinks synchronously, so raising the value trades
+ * worker wakeups for more direct reclaim, and 0 disables the throttle.
+ * Runtime-tunable: /sys/module/slabd/parameters/throttle_ms (built-in
+ * module params live under /sys/module/slabd, named after this object).
+ */
+static unsigned int kshrink_slabd_throttle_ms = 1000;
+module_param_named(throttle_ms, kshrink_slabd_throttle_ms, uint, 0644);
+MODULE_PARM_DESC(throttle_ms, "async-queue throttle window in ms (0 = off)");
 
 extern unsigned long shrink_slab(gfp_t gfp_mask, int nid,
 				 struct mem_cgroup *memcg, int priority);
@@ -185,6 +207,11 @@ static int kshrink_slabd_tune_priority(int priority)
 	return max(priority - 1, DEF_PRIORITY / 2);
 }
 
+static bool kshrink_slabd_ring_nonempty(void)
+{
+	return READ_ONCE(kshrink_slabd_head) != READ_ONCE(kshrink_slabd_tail);
+}
+
 static int kshrink_slabd(void *unused)
 {
 	/*
@@ -197,33 +224,30 @@ static int kshrink_slabd(void *unused)
 
 	while (!kthread_should_stop()) {
 		struct kshrink_slabd_request request;
-		bool pending;
 
 		wait_event_freezable(kshrink_slabd_wait,
-			kthread_should_stop() || READ_ONCE(kshrink_slabd_pending));
+			kthread_should_stop() || kshrink_slabd_ring_nonempty());
 		if (kthread_should_stop())
 			break;
 
 		kshrink_slabd_set_affinity();
 
-		spin_lock_irq(&kshrink_slabd_lock);
-		pending = kshrink_slabd_pending;
-		if (pending) {
-			request = kshrink_slabd_request;
-			kshrink_slabd_pending = false;
+		/* Drain the whole ring in one wake: batched processing. */
+		while (kshrink_slabd_ring_nonempty()) {
+			spin_lock_irq(&kshrink_slabd_lock);
+			request = kshrink_slabd_ring[kshrink_slabd_head %
+						      KSHRINK_SLABD_RING];
+			kshrink_slabd_head++;
+			spin_unlock_irq(&kshrink_slabd_lock);
+
+			request.priority = kshrink_slabd_tune_priority(request.priority);
+			shrink_slab(request.gfp_mask, request.nid, request.memcg,
+				    request.priority);
+			if (request.memcg_pinned)
+				css_put(&request.memcg->css);
+			WRITE_ONCE(kshrink_slabd_completed,
+				   READ_ONCE(kshrink_slabd_completed) + 1);
 		}
-		spin_unlock_irq(&kshrink_slabd_lock);
-
-		if (!pending)
-			continue;
-
-		request.priority = kshrink_slabd_tune_priority(request.priority);
-		shrink_slab(request.gfp_mask, request.nid, request.memcg,
-			    request.priority);
-		if (request.memcg_pinned)
-			css_put(&request.memcg->css);
-		WRITE_ONCE(kshrink_slabd_completed,
-			   READ_ONCE(kshrink_slabd_completed) + 1);
 	}
 	current->flags &= ~(PF_MEMALLOC | PF_KSWAPD);
 
@@ -240,7 +264,8 @@ bool kshrink_slabd_queue(gfp_t gfp_mask, int nid,
 		return false;
 
 	spin_lock_irqsave(&kshrink_slabd_lock, flags);
-	if (!kshrink_slabd_pending) {
+	if (kshrink_slabd_tail - kshrink_slabd_head < KSHRINK_SLABD_RING) {
+		struct kshrink_slabd_request *slot;
 		struct mem_cgroup *pinned = memcg;
 		bool memcg_pinned = false;
 
@@ -253,15 +278,19 @@ bool kshrink_slabd_queue(gfp_t gfp_mask, int nid,
 		}
 
 		if (pinned || !memcg) {
-			kshrink_slabd_request.gfp_mask = gfp_mask;
-			kshrink_slabd_request.nid = nid;
-			kshrink_slabd_request.priority = priority;
-			kshrink_slabd_request.memcg = pinned;
-			kshrink_slabd_request.memcg_pinned = memcg_pinned;
-			kshrink_slabd_pending = true;
+			slot = &kshrink_slabd_ring[kshrink_slabd_tail %
+						   KSHRINK_SLABD_RING];
+			slot->gfp_mask = gfp_mask;
+			slot->nid = nid;
+			slot->priority = priority;
+			slot->memcg = pinned;
+			slot->memcg_pinned = memcg_pinned;
+			kshrink_slabd_tail++;
 			kshrink_slabd_queued++;
 			queued = true;
 		}
+	} else {
+		kshrink_slabd_dropped++;
 	}
 	spin_unlock_irqrestore(&kshrink_slabd_lock, flags);
 
@@ -275,15 +304,17 @@ bool kshrink_slabd_queue(gfp_t gfp_mask, int nid,
  * callers (oom_score_adj == 0, incl. com.miui.home) are bypassed and
  * dropped synchronously; kswapd, the worker itself (both PF_KSWAPD) and
  * non-zero-oom_score_adj callers proceed. Then, once enabled, a request is
- * only queued if at least HZ*1 jiffies passed since the last accepted
- * pass. The worker itself always runs synchronously, and the queue's
- * return value is deliberately ignored (a full slot still bypasses).
+ * only queued if at least throttle_ms milliseconds (default 1000, the
+ * historical HZ*1) passed since the last accepted pass; inside the window
+ * non-kswapd callers are dropped (R8.1), never pushed onto sync reclaim.
+ * The worker and kswapd always run synchronously, and the queue's return
+ * value is deliberately ignored (a full ring still bypasses).
  */
 static void kshrink_slabd_bypass(void *data, gfp_t gfp_mask, int nid,
 				 struct mem_cgroup *memcg, int priority,
 				 bool *bypass)
 {
-	unsigned long prev, curr;
+	unsigned long prev, curr, window;
 	bool (*vip_check)(struct task_struct *t);
 
 	/*
@@ -319,19 +350,40 @@ static void kshrink_slabd_bypass(void *data, gfp_t gfp_mask, int nid,
 	}
 
 	/*
+	 * R8.1: kswapd is never throttled. Under real memory pressure it
+	 * must keep reclaiming at full native rate; deferring or dropping
+	 * its shrink_slab() call would stall the one thread whose job is
+	 * to relieve that pressure.
+	 */
+	if (current_is_kswapd()) {
+		*bypass = false;
+		return;
+	}
+
+	/*
 	 * Claim the throttle window atomically. Publishing the timestamp
 	 * before deciding (the previous behaviour) let a second CPU read the
 	 * just-written value, compute a near-zero difference and shrink
 	 * synchronously, so concurrent callers defeated the throttle instead
 	 * of being deferred by it. With cmpxchg only the CPU that wins the
-	 * window defers work to the shrinker; the others fall through to a
-	 * synchronous shrink, which is the safe direction.
+	 * window defers work to the shrinker.
+	 *
+	 * R8.1: the losers are now DROPPED (*bypass = true), not pushed onto
+	 * a synchronous shrink. Sync reclaim on the allocation path is the
+	 * stall this whole feature exists to remove; a dropped pass costs at
+	 * most one shrink_slab() round, which kswapd (exempt above) and the
+	 * next accepted window both cover.
 	 */
+	window = msecs_to_jiffies(READ_ONCE(kshrink_slabd_throttle_ms));
 	curr = jiffies;
 	prev = READ_ONCE(kshrink_slabd_prev_jiffies);
-	if (curr - prev < HZ * 1 ||
-	    cmpxchg(&kshrink_slabd_prev_jiffies, prev, curr) != prev) {
-		*bypass = false;
+	if (curr - prev < window) {
+		kshrink_slabd_throttled++;
+		*bypass = true;
+		return;
+	}
+	if (cmpxchg(&kshrink_slabd_prev_jiffies, prev, curr) != prev) {
+		*bypass = true;
 		return;
 	}
 
@@ -341,12 +393,14 @@ static void kshrink_slabd_bypass(void *data, gfp_t gfp_mask, int nid,
 
 static int kshrink_slabd_proc_show(struct seq_file *m, void *v)
 {
-	seq_printf(m, "enable = %d\nqueued = %lu\ncompleted = %lu\npending = %u\nthrottle_jiffies = %u\n",
+	seq_printf(m, "enable = %d\nqueued = %lu\ncompleted = %lu\npending = %u\ndropped = %lu\nthrottle_ms = %u\nthrottled = %lu\n",
 		   READ_ONCE(kshrink_slabd_enabled) ? 1 : 0,
 		   READ_ONCE(kshrink_slabd_queued),
 		   READ_ONCE(kshrink_slabd_completed),
-		   READ_ONCE(kshrink_slabd_pending),
-		   HZ * 1);
+		   READ_ONCE(kshrink_slabd_tail) - READ_ONCE(kshrink_slabd_head),
+		   kshrink_slabd_dropped,
+		   READ_ONCE(kshrink_slabd_throttle_ms),
+		   kshrink_slabd_throttled);
 	return 0;
 }
 

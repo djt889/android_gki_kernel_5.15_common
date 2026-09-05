@@ -68,13 +68,20 @@ MODULE_PARM_DESC(enabled, "Enable binder_sched_opt hooks (default 1)");
  * of 512 exploited that as an implicit "no little cores during binder
  * transactions" rule.
  *
- * R7.8: default lowered to 256 so placement stays fully with EAS (every core,
- * including little, satisfies the floor; only extreme thermal pressure on the
- * little cluster can gate it), while keeping a modest frequency floor for the
- * duration of the transaction. Raise it back per-device at runtime via
- * /sys/module/binder_sched_opt/parameters/uclamp_min.
+ * R7.8 lowered the default to 256 so placement stayed fully with EAS (every
+ * core, including little, satisfies the floor; only extreme thermal pressure
+ * on the little cluster can gate it), while keeping a modest frequency floor
+ * for the duration of the transaction.
+ *
+ * R8.1 raises the default to 384: still below the little cluster's capacity
+ * (~460 on this SoC), so util_fits_cpu() keeps the thread placeable on every
+ * core and EAS placement freedom is unchanged -- what 384 buys is a harder
+ * frequency floor, so a boosted binder thread scheduled on a little core is
+ * driven to a proportionally higher P-state for the duration of the
+ * transaction. Devices that want the older behaviour can write it back at
+ * runtime: /sys/module/binder_sched_opt/parameters/uclamp_min.
  */
-static unsigned int binder_sched_opt_uclamp_min = 256;
+static unsigned int binder_sched_opt_uclamp_min = 384;
 module_param_named(uclamp_min, binder_sched_opt_uclamp_min, uint, 0644);
 MODULE_PARM_DESC(uclamp_min,
 	"uclamp_min floor for boosted binder threads, 0..1024 (0 = off)");

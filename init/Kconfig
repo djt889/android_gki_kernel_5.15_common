@@ -868,6 +868,21 @@ config SEW_QOS_INHERIT
 	  OS4 xr_qi reduced port: uclamp_min hint for futex waiters of a
 	  configured vip tgid. Lock-inheritance on the futex chain only.
 
+config SEW_LAUNCH_BOOST
+	bool "Sew launch boost (uclamp floor for zygote forks)"
+	depends on UCLAMP_TASK
+	default y
+	help
+	  Give every process forked by the zygote a short uclamp_min floor
+	  (default 768 for 2500ms) so cold starts run with a frequency
+	  floor from their very first scheduling decision. The task stays
+	  in CFS under the cgroup clamps; after the window the pre-boost
+	  value is restored. Runtime knobs and counters:
+	  /sys/module/sew_launch_boost/parameters/ and /proc/sew_launch_boost.
+	  (Implementation lives in kernel/sched/sew_launch_boost.c; the
+	  config sits with the Sew family because kernel/sched/ has no
+	  Kconfig of its own.)
+
 config UCLAMP_TASK
 	bool "Enable utilization clamping for RT/FAIR tasks"
 	depends on CPU_FREQ_GOV_SCHEDUTIL
