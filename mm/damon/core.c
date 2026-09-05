@@ -48,6 +48,7 @@ struct damon_region *damon_new_region(unsigned long start, unsigned long end)
 
 	return region;
 }
+EXPORT_SYMBOL_GPL(damon_new_region);
 
 void damon_add_region(struct damon_region *r, struct damon_target *t)
 {
@@ -71,6 +72,7 @@ void damon_destroy_region(struct damon_region *r, struct damon_target *t)
 	damon_del_region(r, t);
 	damon_free_region(r);
 }
+EXPORT_SYMBOL_GPL(damon_destroy_region);
 
 struct damos *damon_new_scheme(
 		unsigned long min_sz_region, unsigned long max_sz_region,
@@ -117,6 +119,7 @@ struct damos *damon_new_scheme(
 
 	return scheme;
 }
+EXPORT_SYMBOL_GPL(damon_new_scheme);
 
 void damon_add_scheme(struct damon_ctx *ctx, struct damos *s)
 {
@@ -158,11 +161,13 @@ struct damon_target *damon_new_target(unsigned long id)
 
 	return t;
 }
+EXPORT_SYMBOL_GPL(damon_new_target);
 
 void damon_add_target(struct damon_ctx *ctx, struct damon_target *t)
 {
 	list_add_tail(&t->list, &ctx->adaptive_targets);
 }
+EXPORT_SYMBOL_GPL(damon_add_target);
 
 bool damon_targets_empty(struct damon_ctx *ctx)
 {
@@ -188,6 +193,7 @@ void damon_destroy_target(struct damon_target *t)
 	damon_del_target(t);
 	damon_free_target(t);
 }
+EXPORT_SYMBOL_GPL(damon_destroy_target);
 
 unsigned int damon_nr_regions(struct damon_target *t)
 {
@@ -219,6 +225,7 @@ struct damon_ctx *damon_new_ctx(void)
 
 	return ctx;
 }
+EXPORT_SYMBOL_GPL(damon_new_ctx);
 
 static void damon_destroy_targets(struct damon_ctx *ctx)
 {
@@ -244,6 +251,7 @@ void damon_destroy_ctx(struct damon_ctx *ctx)
 
 	kfree(ctx);
 }
+EXPORT_SYMBOL_GPL(damon_destroy_ctx);
 
 /**
  * damon_set_targets() - Set monitoring targets.
@@ -276,6 +284,7 @@ int damon_set_targets(struct damon_ctx *ctx,
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(damon_set_targets);
 
 /**
  * damon_set_attrs() - Set attributes for the monitoring.
@@ -308,6 +317,7 @@ int damon_set_attrs(struct damon_ctx *ctx, unsigned long sample_int,
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(damon_set_attrs);
 
 /**
  * damon_set_schemes() - Set data access monitoring based operation schemes.
@@ -332,6 +342,7 @@ int damon_set_schemes(struct damon_ctx *ctx, struct damos **schemes,
 		damon_add_scheme(ctx, schemes[i]);
 	return 0;
 }
+EXPORT_SYMBOL_GPL(damon_set_schemes);
 
 /**
  * damon_nr_running_ctxs() - Return number of currently running contexts.
@@ -430,6 +441,7 @@ int damon_start(struct damon_ctx **ctxs, int nr_ctxs)
 
 	return err;
 }
+EXPORT_SYMBOL_GPL(damon_start);
 
 static void kdamond_usleep(unsigned long usecs)
 {
@@ -484,6 +496,7 @@ int damon_stop(struct damon_ctx **ctxs, int nr_ctxs)
 
 	return err;
 }
+EXPORT_SYMBOL_GPL(damon_stop);
 
 /*
  * damon_check_reset_time_interval() - Check if a time interval is elapsed.

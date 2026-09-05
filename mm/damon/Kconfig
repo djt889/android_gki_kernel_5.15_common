@@ -32,6 +32,18 @@ config DAMON_VADDR
 	  This builds the default data access monitoring primitives for DAMON
 	  that work for virtual address spaces.
 
+config MI_DAMON
+	tristate "mi_damon: Xiaomi cold-page reclaim on DAMON vaddr (direct port)"
+	depends on DAMON_VADDR
+	default n
+	help
+	  Direct port of Xiaomi mi_damon.ko (dada OS4, kernel 6.6.57,
+	  virtual-address cold-page reclaim) onto the 5.15 in-tree DAMON
+	  core + vaddr primitive.  VMA traversal is delegated to
+	  mm/damon/vaddr.c (rbtree find_vma, no maple tree).  Exposes
+	  /sys/kernel/mi_damon and the mi_damon:damon_aggregated tracepoint
+	  for BPF consumers.  Experimental residual-port item; default n.
+
 config DAMON_PADDR
 	bool "Data access monitoring primitives for the physical address space"
 	depends on DAMON && MMU
