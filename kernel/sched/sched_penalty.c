@@ -229,6 +229,16 @@ ATTRIBUTE_GROUPS(sew_penalty);
 
 static struct kobject *sew_penalty_kobj;
 
+/* Clear the target when the penalized task exits (rvh_flush_task).
+ * Without this, a recycled pid would be wrongly penalized.
+ */
+static void sew_penalty_flush(void *data, struct task_struct *prev)
+{
+	if (!sew_penalty_target_pid || task_tgid_nr(prev) != sew_penalty_target_pid)
+		return;
+	sew_penalty_target_pid = 0;
+}
+
 static int __init sched_penalty_init(void)
 {
 	int ret;
@@ -247,6 +257,10 @@ static int __init sched_penalty_init(void)
 	ret = tracepoint_probe_register(
 		&__tracepoint_android_rvh_before_do_sched_yield,
 		sew_penalty_before_yield, NULL);
+	if (!ret)
+		tracepoint_probe_register(
+			&__tracepoint_android_rvh_flush_task,
+			sew_penalty_flush, NULL);
 	if (ret) {
 		sysfs_remove_groups(sew_penalty_kobj, sew_penalty_groups);
 		kobject_put(sew_penalty_kobj);
@@ -262,6 +276,9 @@ static void __exit sched_penalty_exit(void)
 	tracepoint_probe_unregister(
 		&__tracepoint_android_rvh_before_do_sched_yield,
 		sew_penalty_before_yield, NULL);
+	tracepoint_probe_unregister(
+		&__tracepoint_android_rvh_flush_task,
+		sew_penalty_flush, NULL);
 	tracepoint_synchronize_unregister();
 	if (sew_penalty_kobj) {
 		sysfs_remove_groups(sew_penalty_kobj, sew_penalty_groups);
