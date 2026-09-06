@@ -20,12 +20,12 @@
  * %d extra_free_kbytes: %d").
  * On store "m n e": min_free_kbytes = m and watermark_scale_factor = n
  * (each skipped when the parsed value is -1; the disasm is pure str, no
- * add - absolute assignment, not +=); extra_free_kbytes = e.  Then it
- * recomputes every zone's _watermark array itself (the 6.6 built-in
- * pokes zone->_watermark directly; it does NOT call setup_per_zone_wmarks)
- * - i.e. it moves the MIN/LOW/HIGH waterlines themselves (kswapd wakeup
- * thresholds), not the per-allocation fast-path check.  A spinlock
- * guards the three values.
+ * add - absolute assignment, not +=); extra_free_kbytes = e.  The 6.6
+ * built-in then recomputes every zone's _watermark array inline (it does
+ * NOT call setup_per_zone_wmarks - that is a Sew [PORT-DELTA], see
+ * below).  Net effect: it moves the MIN/LOW/HIGH waterlines themselves
+ * (kswapd wakeup thresholds), not the per-allocation fast-path check.
+ * A spinlock guards the three values.
  *
  * Why this is safe where mi_reclaim's wmark_boost was not
  * --------------------------------------------------------
@@ -75,6 +75,7 @@
 
 /* in-tree page_alloc.c state (built-in only: no ksymtab exports) */
 extern int min_free_kbytes;
+extern int user_min_free_kbytes;
 extern int watermark_scale_factor;
 extern void setup_per_zone_wmarks(void);
 
@@ -106,7 +107,12 @@ static ssize_t extra_free_kbytes_store(struct kobject *kobj,
 	int rc;
 
 	rc = sscanf(buf, "%d %d %d", &m, &n, &e);
-	if (rc != 3 && rc != 1)
+	if (rc < 1)
+		return -EINVAL;
+	/* [PORT-DELTA] minor: require the full triple (6.6 accepted 1 or 3;
+	 * a partial "5" would silently leave n/e at their -1 defaults and
+	 * still rescale - reject anything that is not exactly 3 fields). */
+	if (rc != 3)
 		return -EINVAL;
 
 	/*
@@ -121,13 +127,25 @@ static ssize_t extra_free_kbytes_store(struct kobject *kobj,
 		return -EINVAL;
 	if (n != -1 && (n < 1 || n > 3000))
 		return -EINVAL;
+	if (e != -1 && e < 0)
+		return -EINVAL;
 
 	pr_info("extra_free_kbytes_store pid=%d, comm=%s",
 		task_pid_nr(current), current->comm);
 
 	spin_lock_irqsave(&mi_wmark_lock, flags);
-	if (m != -1)
+	if (m != -1) {
 		min_free_kbytes = m;
+		/*
+		 * [PORT-DELTA] blocker fix: the proc handler
+		 * (min_free_kbytes_sysctl_handler) also sets
+		 * user_min_free_kbytes so calculate_min_free_kbytes()
+		 * (khugepaged.c:2357, boot) will NOT overwrite our value.
+		 * Without this, a khugepaged min_free recompute silently
+		 * reverts the write.  Mirror the proc semantics.
+		 */
+		user_min_free_kbytes = m;
+	}
 	if (n != -1)
 		watermark_scale_factor = n;
 	if (e != -1)
