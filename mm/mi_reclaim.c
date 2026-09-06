@@ -56,6 +56,22 @@
  *     reclaim_bypass (the pool semantics are not recoverable from the
  *     binary strings with confidence; a wrong bypass hands out foreign
  *     pages).  [PORT-DELTA]
+ *     Re-audit 2026-09-06 (mi_reclaim.ko 6.6.57, dis in
+ *     outputs/subsys-fix): bypass/refill/pool_add/pool_remove/cleanup
+ *     control flow decodes, but five items block a 98%-confidence port:
+ *     (1) mi_pool bss layout has no named symbols (offsets only), so the
+ *     low/high/critical-mark and count field mapping is inferred, not
+ *     proven; (2) bypass gfp->migratetype decode (ubfiz/lsr/csel on
+ *     constant 0x252115) has no source counterpart, match rule not provable;
+ *     (3) is_important_process keys off 6.6 task_struct vendor-private
+ *     offsets task+1568/1624 (5.15 sched.h has no equivalent field) and
+ *     the qi vendor pad (task+0x12c0/q+0x38), so the pool membership
+ *     test cannot be mapped; (4) low_mark trigger chain mixes refill
+ *     interval/urgent-wakeup/qos gates whose sysfs value semantics are
+ *     not recoverable; (5) refill/prefill allocate order-0 via
+ *     __alloc_pages(GFP 0x112DC2) and return via __free_pages, but the
+ *     order/migratetype/zone contract the bypass promises is unknown.
+ *     Verdict: keep unported; evidence above replaces guessing.
  *   - shrink_slab_bypass: the binary only shows the stat name
  *     "kswapd_shrink_slab"; no recoverable bypass condition.  The hook
  *     exists in-tree but stays unregistered here (single-consumer

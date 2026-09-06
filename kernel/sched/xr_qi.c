@@ -19,18 +19,25 @@
  * mutex hooks cover that path there) exists here in full and is ported
  * as a first-class chain.
  *
- * Hook closure vs dada (40 registered = 33 dada hooks present on 5.15
+ * Hook closure vs dada (40 vh registered + 3 native mmap_lock
+ * observers = 33 dada hooks present on 5.15
  * + the Sew futex wait_start channel dada does not consume + 6
  * 5.15-only rtmutex hooks):
- *  - futex 4/5 (wait_queue_start missing on 5.15 -> PORT-DELTA)
+ *  - futex 4/5 (wait_queue_start missing on 5.15 -> PORT-DELTA;
+ *    waiter-side inherit on pi_state owner, unreachable w/o the hook)
  *  - mutex 8/8 (incl. alter_mutex_list_add as the exported dada
  *    callback os_cpu_android_vh_alter_mutex_list_add)
  *  - rtmutex 6/6 (5.15-only chain: wait_start/finish,
  *    task_blocks_on_rtmutex, waiter_prio, rt_mutex_steal,
  *    record_rtmutex_lock_starttime)
- *  - rwsem 10/10 + percpu-rwsem 2/3 (percpu_rwsem_init missing)
- *  - binder 6/6, task lifecycle 3/5 (mmap_lock_init/free missing)
- *  - fuse 0/2, rcu 0/4 (hooks missing on 5.15 -> PORT-DELTA)
+ *  - rwsem 10/10 + percpu-rwsem 2/3 (percpu_rwsem_init missing;
+ *    slot zeroing only, chain carried by wq_add + release)
+ *  - binder 6/6, task lifecycle 3/3 vh + 3 native mmap_lock observers
+ *    (dada init/free = per-lock slot mgmt, no inherit; 5.15 wait
+ *    observation on start_locking/acquire_returned/released,
+ *    count-only, comm chain)
+ *  - fuse 0/2, rcu 0/4 (hooks missing on 5.15 -> PORT-DELTA; no 5.15
+ *    equivalent exposes those waiters)
  *
  * Exported interface (41 symbols, aligned with the dada nm list):
  *  - call_qievent_notifiers + struct qi_qievent_info (event codes
@@ -64,9 +71,11 @@
  *  - qi_/qos_ tracepoints (32): no kbuild trace-header plumbing for
  *    in-tree modules here; the peer-module event channel is the
  *    qievent notifier chain, the BPF channel is absent.
- *  - 9 hooks missing on 5.15: percpu_rwsem_init, futex_wait_queue_
- *    start, fuse_request_end_ext/fetch, rcu_boost_start/end,
- *    sync_rcu_wait_start/end, mmap_lock_init/free.
+ *  - 9 hooks missing on 5.15: percpu_rwsem_init (slot zeroing
+ *    only, chain carried), futex_wait_queue_start, fuse_request_end_ext
+ *    /fetch, rcu_boost_start/end, sync_rcu_wait_start/end,
+ *    mmap_lock_init/free (per-lock slot mgmt, no inherit; the wait is
+ *    observed on the 3 native mmap_lock events instead).
  *  - qi task vendor pad (task+0x12c0, qi at pad+0x38): no 5.15
  *    equivalent - QoS levels are derived (see queries above), the
  *    qi struct accessors return NULL, the 6.6 refcounted set/dyn
@@ -99,6 +108,8 @@
 #include <linux/futex.h>
 #include <linux/notifier.h>
 #include <linux/uaccess.h>
+#include <linux/mmap_lock.h>
+#include <linux/tracepoint.h>
 #include <trace/hooks/futex.h>
 #include <trace/hooks/dtask.h>
 #include <trace/hooks/rwsem.h>
@@ -483,6 +494,42 @@ static bool sew_qi_waiter_on_lock(void *lock_ptr, unsigned char kind)
 static void sew_qi_passive(void)
 {
 	atomic64_inc(&sew_qi_passive_events);
+}
+
+/*
+ * mmap_lock wait observation (PORT-DELTA vs dada).  dada consumes
+ * android_vh_mmap_lock_init/free, two 6.6 vendor hooks whose callbacks
+ * manage a per-lock private-data slot (xr_qi.dis: init does
+ * "str x1, [x1, #40]" i.e. stores a cookie at the lock object +40;
+ * free clears [x1, #40/#48] and kfrees the slot) - task-lifecycle
+ * bookkeeping, there is NO waiter/owner inheritance on that path.
+ * Those hooks do not exist on 5.15, and the 5.15 native mmap_lock
+ * trace events (mm/mmap_lock.c TRACE_MMAP_LOCK_EVENT: start_locking /
+ * acquire_returned / released) likewise expose only (mm, memcg_path,
+ * write[, success]) - no lock object, no waiter, no owner - so they
+ * cannot carry QOS inheritance either.  The three probes below are
+ * count-only observation: they fire the vp/observer path (passive
+ * counter) so mmap contention stays visible in xr_qi stats without
+ * pretending to inherit.  Registered via tracepoint_probe_register
+ * (native events, not android_vh hooks) under the comm chain switch.
+ */
+static void sew_qi_mmap_lock_start(void *data, struct mm_struct *mm,
+				   const char *memcg_path, bool write)
+{
+	sew_qi_passive();
+}
+
+static void sew_qi_mmap_lock_acquired(void *data, struct mm_struct *mm,
+				      const char *memcg_path, bool write,
+				      bool success)
+{
+	sew_qi_passive();
+}
+
+static void sew_qi_mmap_lock_released(void *data, struct mm_struct *mm,
+				      const char *memcg_path, bool write)
+{
+	sew_qi_passive();
 }
 
 /*
@@ -1603,7 +1650,10 @@ EXPORT_SYMBOL_GPL(qi_vh_binder_unregister);
 /*
  * dada carries the task-lifecycle hooks under its comm chain (the
  * remaining hook classes are accounted for by the other seven
- * switches); same grouping here.
+ * switches); same grouping here.  The three native mmap_lock wait
+ * events ride along as passive observers (PORT-DELTA, see the
+ * sew_qi_mmap_lock_* comment); they use tracepoint_probe_register
+ * because they are native trace events, not android_vh hooks.
  */
 int qi_vh_comm_register(void)
 {
@@ -1616,7 +1666,22 @@ int qi_vh_comm_register(void)
 		ret = register_trace_android_vh_exit_check(sew_qi_exit_check, NULL);
 	if (!ret)
 		ret = register_trace_android_vh_free_task(sew_qi_free_task, NULL);
+	if (!ret)
+		ret = tracepoint_probe_register(&__tracepoint_mmap_lock_start_locking,
+						sew_qi_mmap_lock_start, NULL);
+	if (!ret)
+		ret = tracepoint_probe_register(&__tracepoint_mmap_lock_acquire_returned,
+						sew_qi_mmap_lock_acquired, NULL);
+	if (!ret)
+		ret = tracepoint_probe_register(&__tracepoint_mmap_lock_released,
+						sew_qi_mmap_lock_released, NULL);
 	if (ret) {
+		tracepoint_probe_unregister(&__tracepoint_mmap_lock_released,
+					    sew_qi_mmap_lock_released, NULL);
+		tracepoint_probe_unregister(&__tracepoint_mmap_lock_acquire_returned,
+					    sew_qi_mmap_lock_acquired, NULL);
+		tracepoint_probe_unregister(&__tracepoint_mmap_lock_start_locking,
+					    sew_qi_mmap_lock_start, NULL);
 		unregister_trace_android_vh_free_task(sew_qi_free_task, NULL);
 		unregister_trace_android_vh_exit_check(sew_qi_exit_check, NULL);
 		unregister_trace_android_vh_dup_task_struct(sew_qi_dup_task_struct, NULL);
@@ -1630,6 +1695,12 @@ void qi_vh_comm_unregister(void)
 {
 	if (!test_and_clear_bit(SEW_QI_CHAIN_COMM, &sew_qi_chain_enabled))
 		return;
+	tracepoint_probe_unregister(&__tracepoint_mmap_lock_released,
+				    sew_qi_mmap_lock_released, NULL);
+	tracepoint_probe_unregister(&__tracepoint_mmap_lock_acquire_returned,
+				    sew_qi_mmap_lock_acquired, NULL);
+	tracepoint_probe_unregister(&__tracepoint_mmap_lock_start_locking,
+				    sew_qi_mmap_lock_start, NULL);
 	unregister_trace_android_vh_dup_task_struct(sew_qi_dup_task_struct, NULL);
 	unregister_trace_android_vh_exit_check(sew_qi_exit_check, NULL);
 	unregister_trace_android_vh_free_task(sew_qi_free_task, NULL);

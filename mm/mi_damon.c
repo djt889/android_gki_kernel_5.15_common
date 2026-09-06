@@ -61,13 +61,18 @@
  *     block mappings at PMD/PTE level.  Impact: none on 5.15 semantics;
  *     we lose the 6.6 optimization of clearing young bits across a whole
  *     contiguous block in one go (slightly more page-table walking).
- * 12. page_pinner_inited  - Xiaomi private page-pinning debug framework.
- *     STUBBED OUT: the original damon_get_folio() consulted page_pinner
- *     to track pages held during monitoring.  Impact: purely diagnostic;
- *     page lifecycle and reclaim decisions are unaffected, pin-debug
- *     accounting for monitored pages is not available on 5.15.
+ * 12. page_pinner_inited  - generic 5.15 page-pinning debug framework
+ *     (mm/page_pinner.c, EXPORT_SYMBOL_GPL __page_pinner_put_page; the
+ *     _inited static key itself is NOT exported for module use).
+ *     STUBBED OUT: the 6.6 module embedded prmtv-common consulted it in
+ *     its own damon_get_folio(); the 5.15 port delegates access checking
+ *     to in-tree mm/damon/vaddr.c + prmtv-common.c, which return plain
+ *     put_page() references with no pin-debug accounting.  Impact:
+ *     purely diagnostic; page lifecycle and reclaim decisions are
+ *     unaffected (re-verified 2026-09-06: in-tree vaddr.c:431,531 and
+ *     prmtv-common.c:30,56,81 all use plain put_page()).
  * 13. __page_pinner_put_page - companion of (12).  STUBBED OUT with the
- *     same impact: the pin-debug put hook is gone, normal folio_put path
+ *     same impact: the pin-debug put hook is gone, normal put_page path
  *     (inside in-tree vaddr/prmtv-common) remains.
  *
  * Known behavioral deltas (documented, accepted for the experimental branch)
