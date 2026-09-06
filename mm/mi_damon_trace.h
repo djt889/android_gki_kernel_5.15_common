@@ -18,7 +18,7 @@
 
 #include <linux/tracepoint.h>
 
-TRACE_EVENT(damon_aggregated,
+TRACE_EVENT(mi_damon_aggregated,
 
 	TP_PROTO(unsigned long target_id, unsigned int nr_regions,
 		 unsigned long start, unsigned long end,

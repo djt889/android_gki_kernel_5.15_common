@@ -1580,7 +1580,8 @@ static int __init vip_sched_init(void)
 	 * pin itself: without this, rmmod leaves the rq-lock-path probes
 	 * dangling into freed module memory (reviewer blocker 1).
 	 */
-	__module_get(THIS_MODULE);
+	if (THIS_MODULE)
+		__module_get(THIS_MODULE);
 	pr_info("vip_sched: MI QOS sched Driver (Sew 5.15 port) ready\n");
 	return 0;
 

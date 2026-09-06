@@ -842,7 +842,7 @@ menu "Scheduler features"
 config RT_MOD
 	tristate "Sew RT load observer (kprobe on __sched_setscheduler)"
 	depends on KPROBES && ARM64
-	default n
+	default y
 	help
 	  Count SCHED_FIFO/SCHED_RR policy requests through a kprobe on
 	  __sched_setscheduler and expose the counters through
@@ -854,7 +854,7 @@ config RT_MOD
 config HANGDETECT
 	tristate "Sew OS4 hangdetect (kicker watchdog, ramoops persistence)"
 	depends on ANDROID_VENDOR_HOOKS
-	default n
+	default y
 	help
 	  Port of the Xiaomi OS4 hangdetect: userspace kicks the misc
 	  device /dev/hangdetect ("start <ms>"/"stop"/"kick"/"whitelist
@@ -867,7 +867,7 @@ config HANGDETECT
 config SCHED_PENALTY
 	tristate "Sew yield penalty"
 	depends on ANDROID_VENDOR_HOOKS
-	default n
+	default y
 	help
 	  OS4 sched-penalty port: replace sched_yield() of a target task
 	  with a bounded sleep up to the next frame boundary. uid-gated
@@ -876,7 +876,7 @@ config SCHED_PENALTY
 config XR_QI
 	tristate "Sew minimal futex QOS-inheritance"
 	depends on ANDROID_VENDOR_HOOKS
-	default n
+	default y
 	help
 	  OS4 xr_qi reduced port: uclamp_min hint for futex waiters of a
 	  configured vip tgid. Lock-inheritance on the futex chain only.
@@ -884,7 +884,7 @@ config XR_QI
 config XR_QS
 	tristate "Sew scenarized QOS sched executor (xr_qs port)"
 	depends on ANDROID_VENDOR_HOOKS && PLAT_COMMON
-	default n
+	default y
 	help
 	  OS4 xr_qs port: scenarized QOS scheduling executor ("OS-CPU QOS
 	  sched Driver"). Scene group table with ui/render pairs, RT
@@ -910,7 +910,7 @@ config SEW_LAUNCH_BOOST
 config VIP_SCHED
 	tristate "Sew OS4 VIP scheduler (vip_sched)"
 	depends on ARM64 && PLAT_COMMON && PERF_ACTUATOR && ANDROID_VENDOR_HOOKS
-	default n
+	default y
 	help
 	  Rewrite of the Xiaomi dada OS4 vip_sched.ko ("MI QOS sched
 	  Driver"): per-task VIP priority with per-cpu queues, wake
@@ -920,7 +920,7 @@ config VIP_SCHED
 config RTG
 	tristate "Sew OS4 Related Thread Group scheduler (rtg)"
 	depends on ARM64 && PLAT_COMMON && PERF_ACTUATOR && ANDROID_VENDOR_HOOKS
-	default n
+	default y
 	help
 	  Rewrite of the Xiaomi dada OS4 rtg.ko (Related Thread Group).
 	  Keeps the original Xiaomi symbol names (get_related_thread_group,

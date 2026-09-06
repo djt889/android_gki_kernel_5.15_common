@@ -203,7 +203,7 @@ static void mi_damon_reset_aggregated(struct damon_ctx *ctx)
 			unsigned int permil = mi_permil(r->last_nr_accesses,
 							max_accesses);
 
-			trace_damon_aggregated(t->id, nr_total, r->ar.start,
+			trace_mi_damon_aggregated(t->id, nr_total, r->ar.start,
 					r->ar.end, permil, r->age);
 			if (mi_debug_log)
 				pr_info("agg: target %lu region %lu-%lu permil %u age %u\n",

@@ -5,7 +5,7 @@
 
 config MI_BOOT_TIME
 	tristate "boot time record"
-	default n
+	default y
 	help
 	This adds support for mi boot time. As a module the initcall
 	tracepoints have already fired before modprobe, so only the

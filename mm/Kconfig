@@ -997,7 +997,7 @@ config SEW_MMAP_BYPASS
 config UNFAIRMEM
 	tristate "Sew unfairmem: bounded watermark relax for flagged tasks"
 	depends on ANDROID_VENDOR_HOOKS
-	default n
+	default y
 	help
 	  OS4 unfairmem port: relax the allocation watermark for
 	  sf_pid/scene_tid (bounded), and have slabd skip slab reclaim
@@ -1006,7 +1006,7 @@ config UNFAIRMEM
 config MI_RECLAIM
 	tristate "Sew reclaim-path observability"
 	depends on ANDROID_VENDOR_HOOKS
-	default n
+	default y
 	help
 	  OS4 mi_reclaim idea, observe-only first cut: counts slow-path
 	  entries and direct-reclaim outcomes via the new hooks.
@@ -1014,7 +1014,7 @@ config MI_RECLAIM
 config DYNAMIC_READAHEAD
 	tristate "Sew dynamic readahead (per-uid)"
 	depends on ANDROID_VENDOR_HOOKS
-	default n
+	default y
 	help
 	  OS4 dynamic_readahead reduced port: per-uid fault_around and
 	  readahead-window scale control.
@@ -1040,7 +1040,7 @@ config SEW_ALLOC_ADJUST
 
 config BOOTMONITOR
 	tristate "Sew boot-event logger (OS4 bootmonitor reduced port)"
-	default n
+	default y
 	help
 	  Record ordered boot-event anchors and mirror the summary into
 	  the ramoops-persisted kernel log. /proc/sew_bootmonitor shows
@@ -1050,7 +1050,7 @@ config BOOTMONITOR
 config SCENE_SWAPPINESS
 	tristate "Sew scene-based reclaim swappiness"
 	depends on ANDROID_VENDOR_HOOKS
-	default n
+	default y
 	help
 	  Select the reclaim swappiness value by scene name written to
 	  /proc/sew_scene_swappiness/scene (default/game/camera/browser).
@@ -1061,7 +1061,7 @@ config SCENE_SWAPPINESS
 config RSS_MONITOR
 	tristate "Sew RSS/runtime monitor for a tgid allowlist"
 	depends on TRACEPOINTS
-	default n
+	default y
 	help
 	  Observe RSS and accumulated runtime of a tgid allowlist through a
 	  dynamic probe on the sched_stat_runtime tracepoint. Tasks whose
@@ -1072,7 +1072,7 @@ config RSS_MONITOR
 
 config PERF_ACTUATOR
 	tristate "Sew perf_actuator QoS dispatch bridge (dada OS4 port)"
-	default n
+	default y
 	help
 	  Rewrite of the Xiaomi dada OS4 perf_actuator.ko QoS bridge.
 	  Exposes two misc devices, /dev/xr_perf_actuator and /dev/xr_fbt,
@@ -1085,7 +1085,7 @@ config PERF_ACTUATOR
 config PLAT_COMMON
 	tristate "Sew OS4 platform hook dispatch library (plat_common)"
 	depends on ANDROID_VENDOR_HOOKS
-	default n
+	default y
 	help
 	  Port of the Xiaomi dada OS4 plat_common.ko "OS-CPU Platform Hook"
 	  dispatch library. Keeps the original Xiaomi plat_* exported symbol

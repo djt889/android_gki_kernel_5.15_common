@@ -35,7 +35,7 @@ config DAMON_VADDR
 config MI_DAMON
 	tristate "mi_damon: Xiaomi cold-page reclaim on DAMON vaddr (direct port)"
 	depends on DAMON_VADDR
-	default n
+	default y
 	help
 	  Direct port of Xiaomi mi_damon.ko (dada OS4, kernel 6.6.57,
 	  virtual-address cold-page reclaim) onto the 5.15 in-tree DAMON
