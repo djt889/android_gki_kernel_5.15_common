@@ -18,12 +18,14 @@
  * parsed from the attr: store logs "extra_free_kbytes_store pid=%d,
  * comm=%s", show prints "min_free_kbytes: %d watermark_scale_factor:
  * %d extra_free_kbytes: %d").
- * On store "m n e": min_free_kbytes += m and watermark_scale_factor +=
- * n (each skipped when the parsed value is -1); extra_free_kbytes = e
- * (always stored).  Then it rescales every zone's _watermark array and
- * calls the totalreserve updater - i.e. it moves the MIN/LOW/HIGH
- * waterlines themselves (kswapd wakeup thresholds), not the
- * per-allocation fast-path check.  A spinlock guards the three values.
+ * On store "m n e": min_free_kbytes = m and watermark_scale_factor = n
+ * (each skipped when the parsed value is -1; the disasm is pure str, no
+ * add - absolute assignment, not +=); extra_free_kbytes = e.  Then it
+ * recomputes every zone's _watermark array itself (the 6.6 built-in
+ * pokes zone->_watermark directly; it does NOT call setup_per_zone_wmarks)
+ * - i.e. it moves the MIN/LOW/HIGH waterlines themselves (kswapd wakeup
+ * thresholds), not the per-allocation fast-path check.  A spinlock
+ * guards the three values.
  *
  * Why this is safe where mi_reclaim's wmark_boost was not
  * --------------------------------------------------------
@@ -112,14 +114,20 @@ static ssize_t extra_free_kbytes_store(struct kobject *kobj,
 
 	spin_lock_irqsave(&mi_wmark_lock, flags);
 	if (m != -1)
-		min_free_kbytes += m;
+		min_free_kbytes = m;
 	if (n != -1)
-		watermark_scale_factor += n;
+		watermark_scale_factor = n;
 	if (e != -1)
 		mi_extra_free_kbytes = e;
 	spin_unlock_irqrestore(&mi_wmark_lock, flags);
 
-	/* same rescale the proc handlers perform (see header note) */
+	/*
+	 * [PORT-DELTA] the 6.6 built-in recomputes zone->_watermark[]
+	 * inline; on 5.15 the correct equivalent is setup_per_zone_wmarks()
+	 * (what both proc sysctl handlers call) - it also refreshes
+	 * totalreserve_pages and the stat thresholds, so the waterlines
+	 * stay consistent with the rest of the VM.
+	 */
 	setup_per_zone_wmarks();
 	return count;
 }
