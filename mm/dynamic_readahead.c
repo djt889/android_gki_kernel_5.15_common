@@ -57,7 +57,9 @@ static void sew_ra_max_page(void *data, struct readahead_control *ractl,
 	if (sew_ra_scale_pct == 100 || !*max_pages)
 		return;
 
-	scaled = mult_frac(*max_pages, sew_ra_scale_pct, 100);
+	scaled = mult_frac(*max_pages,
+			   clamp_t(unsigned int, sew_ra_scale_pct, 1, 200),
+			   100);
 	if (scaled < 1)
 		scaled = 1;
 	*max_pages = scaled;

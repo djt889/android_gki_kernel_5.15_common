@@ -1210,7 +1210,7 @@ static bool __can_migrate_vip(struct vip_task *v, int dst_cpu,
 static int __vip_balance_commit(struct vip_rq *vrq, bool dst_locked)
 {
 	struct rq *dst_rq = cpu_rq(vrq->cpu), *src_rq;
-	unsigned long flags;
+	unsigned long src_flags, dst_flags;
 	struct vip_task *pos, *victim = NULL;
 	struct vip_rq *src_vrq;
 	int src_cpu = -1, dst_cpu = vrq->cpu, cpu;
@@ -1241,14 +1241,25 @@ static int __vip_balance_commit(struct vip_rq *vrq, bool dst_locked)
 
 	src_rq = cpu_rq(src_cpu);
 	/*
-	 * Trylock (audit P0-1): the tick and newidle callers already hold
-	 * their own rq lock while other cpus run the same pull against us,
-	 * so a plain lock can form dst->src / src->dst rq-lock cycles and
-	 * freeze the scheduler.  Migration is best-effort: fail the pull
-	 * instead of waiting.  Returning here also keeps vrq->busy honest
-	 * (audit P0-3 - a stuck busy flag silently kills the pull channel).
+	 * Both rq locks are trylocked (audit P0-1, round 2): the tick
+	 * caller already holds dst_rq's lock (it pulls into its own rq) and
+	 * passes dst_locked=true; the csd callback can interrupt any
+	 * rq-lock holder, so for dst_locked=false even dst must be a
+	 * trylock - a plain second lock on an already-held rq deadlocks
+	 * instantly, and cross-cpu plain locks form dst->src / src->dst
+	 * cycles.  Migration is best-effort: any trylock failure abandons
+	 * the pull with busy reset.  deactivate+activate run under both
+	 * locks, so no half-migrated state is observable.
 	 */
-	if (!raw_spin_trylock_irqsave(&src_rq->__lock, flags)) {
+	if (!dst_locked) {
+		if (!raw_spin_trylock_irqsave(&dst_rq->__lock, dst_flags)) {
+			vrq->busy = false;
+			return false;
+		}
+	}
+	if (!raw_spin_trylock_irqsave(&src_rq->__lock, src_flags)) {
+		if (!dst_locked)
+			raw_spin_unlock_irqrestore(&dst_rq->__lock, dst_flags);
 		vrq->busy = false;
 		return false;
 	}
@@ -1264,19 +1275,12 @@ static int __vip_balance_commit(struct vip_rq *vrq, bool dst_locked)
 
 		deactivate_task(src_rq, chosen, 0);
 		set_task_cpu(chosen, dst_cpu);
-	}
-	raw_spin_unlock_irqrestore(&src_rq->__lock, flags);
-
-	if (victim) {
-		struct task_struct *chosen = victim->task;
-
-		if (!dst_locked)
-			raw_spin_lock_irqsave(&dst_rq->__lock, flags);
 		activate_task(dst_rq, chosen, 0);
 		check_preempt_curr(dst_rq, chosen, 0);
-		if (!dst_locked)
-			raw_spin_unlock_irqrestore(&dst_rq->__lock, flags);
 	}
+	raw_spin_unlock_irqrestore(&src_rq->__lock, src_flags);
+	if (!dst_locked)
+		raw_spin_unlock_irqrestore(&dst_rq->__lock, dst_flags);
 
 	vrq->busy = false;
 	trace_vip_balance(src_cpu, dst_cpu,
@@ -1355,7 +1359,11 @@ void vip_sched_scheduler_tick(struct rq *rq)
 	if (vrq->nr_queued == 0) {
 		vrq->level = 0;
 		if (!plat_cpu_halted(cpu_of(rq)))
-			vip_balance_commit(vrq);
+			/* audit P0 round 2: scheduler_tick holds rq->lock on
+			 * 5.15 - we are the dst and must not lock it again
+			 * (a plain lock here deadlocked on every successful
+			 * tick pull). */
+			__vip_balance_commit(vrq, true);
 		if (vrq->nr_queued == 0)
 			return;
 	}

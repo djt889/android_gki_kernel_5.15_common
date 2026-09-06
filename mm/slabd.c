@@ -330,16 +330,16 @@ static void kshrink_slabd_bypass(void *data, gfp_t gfp_mask, int nid,
 		return;
 	}
 
+	if (!READ_ONCE(kshrink_slabd_enabled)) {
+		*bypass = false;
+		return;
+	}
+
 	if (!current_is_kswapd() &&
 	    current != READ_ONCE(kshrink_slabd_task) &&
 	    (current->group_leader->signal->oom_score_adj == 0 ||
 	     !strcmp(current->group_leader->comm, "com.miui.home"))) {
 		*bypass = true;
-		return;
-	}
-
-	if (!READ_ONCE(kshrink_slabd_enabled)) {
-		*bypass = false;
 		return;
 	}
 

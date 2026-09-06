@@ -170,6 +170,8 @@ extern int unregister_perf_actuator(int idx);
  */
 struct walt_related_thread_group {
 	int id;
+	/* dada struct ABI; this port serializes on the global rtg_lock
+	 * instead - tasks_lock is unused and must stay unused. */
 	raw_spinlock_t tasks_lock;
 	struct list_head tasks;
 	bool allocated;			/* walt creates groups lazily */

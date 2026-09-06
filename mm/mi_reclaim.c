@@ -161,7 +161,8 @@ static void mir_reclaim_end(void *data, unsigned long nr_reclaimed)
 	if (!nr_reclaimed)
 		atomic64_inc(&sew_reclaim_zero_progress);
 	if (t0)
-		atomic64_add(local_clock() - t0, &mir_total_reclaim_ms);
+		atomic64_add(div_u64(local_clock() - t0, 1000000),
+			     &mir_total_reclaim_ms);
 }
 
 static void mir_throttle_bypass(void *data, bool *bypass)

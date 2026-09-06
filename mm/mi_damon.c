@@ -87,6 +87,7 @@
 #define pr_fmt(fmt) "mi_damon: " fmt
 
 #include <linux/damon.h>
+#include <linux/pid.h>
 #include <linux/kobject.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
@@ -276,16 +277,28 @@ static struct damos *mi_damon_new_scheme(void)
 				mi_action, &quota, &wmarks);
 }
 
+static void mi_damon_put_targets(struct damon_ctx *ctx)
+{
+	struct damon_target *t, *next;
+
+	damon_for_each_target_safe(t, next, ctx)
+		put_pid((struct pid *)t->id);
+}
+
 static int mi_damon_do_start(void)
 {
 	struct damon_ctx *ctx;
 	struct damos *scheme;
-	unsigned long pid = mi_pid_target;
+	struct pid *pidp;
+	unsigned long id;
 	int ret;
 
 	if (mi_damon_ctx)
 		return -EALREADY;
 	if (!mi_pid_target)
+		return -EINVAL;
+	/* sample_us 0 would busy-loop the kdamond (audit P1-3). */
+	if (!mi_sample_us || mi_sample_us > mi_aggr_us)
 		return -EINVAL;
 
 	ctx = damon_new_ctx();
@@ -299,22 +312,37 @@ static int mi_damon_do_start(void)
 	if (ret)
 		goto err_ctx;
 
-	ret = damon_set_targets(ctx, &pid, 1);
-	if (ret)
+	/*
+	 * Audit P0: 5.15's vaddr primitive treats target->id as a
+	 * referenced struct pid pointer (damon/vaddr.c get_pid_task).  The
+	 * raw pid number we passed before made the first sampling round
+	 * dereference garbage -> oops -> panic on real devices.  Hold a
+	 * pid reference for the monitoring lifetime (dropped in do_stop
+	 * and on the error paths below).
+	 */
+	pidp = find_get_pid((pid_t)mi_pid_target);
+	if (!pidp)
+		return -EINVAL;
+	id = (unsigned long)pidp;
+
+	ret = damon_set_targets(ctx, &id, 1);
+	if (ret) {
+		put_pid(pidp);
 		goto err_ctx;
+	}
 
 	scheme = mi_damon_new_scheme();
 	if (!scheme) {
 		ret = -ENOMEM;
-		goto err_ctx;
+		goto err_targets;
 	}
 	ret = damon_set_schemes(ctx, &scheme, 1);
 	if (ret)
-		goto err_ctx;	/* scheme owned by ctx once added */
+		goto err_targets;	/* scheme owned by ctx once added */
 
 	ret = damon_start(&ctx, 1);
 	if (ret)
-		goto err_ctx;
+		goto err_targets;
 
 	mi_damon_ctx = ctx;
 	mi_damon_running = true;
@@ -323,6 +351,8 @@ static int mi_damon_do_start(void)
 			mi_pid_target, mi_sample_us, mi_aggr_us, mi_min_vma);
 	return 0;
 
+err_targets:
+	mi_damon_put_targets(ctx);
 err_ctx:
 	damon_destroy_ctx(ctx);
 	return ret;
@@ -334,6 +364,7 @@ static void mi_damon_do_stop(void)
 		return;
 
 	damon_stop(&mi_damon_ctx, 1);
+	mi_damon_put_targets(mi_damon_ctx);
 	damon_destroy_ctx(mi_damon_ctx);
 	mi_damon_ctx = NULL;
 	mi_damon_running = false;

@@ -240,8 +240,11 @@ static ssize_t hd_write(struct file *file, const char __user *ubuf,
 		mutex_lock(&hd_lock);
 		if (!strcmp(arg1, "add")) {
 			if (hd.whitelist_len < HD_MAX_WHITELIST) {
-				strncpy(hd.whitelist[hd.whitelist_len++],
+				strncpy(hd.whitelist[hd.whitelist_len],
 					arg2, HD_COMM_LEN - 1);
+				hd.whitelist[hd.whitelist_len]
+					[HD_COMM_LEN - 1] = '\0';
+				hd.whitelist_len++;
 				pr_info("hang_detect: add white list %s\n",
 					arg2);
 			}
@@ -264,11 +267,15 @@ static ssize_t hd_write(struct file *file, const char __user *ubuf,
 	}
 	if (!strcmp(cmd, "action") && n >= 2) {
 		if (!strcmp(arg1, "panic")) {
+			mutex_lock(&hd_lock);
 			hd.action = HD_ACTION_PANIC;
+			mutex_unlock(&hd_lock);
 			return len;
 		}
 		if (!strcmp(arg1, "dump")) {
+			mutex_lock(&hd_lock);
 			hd.action = HD_ACTION_DUMP_ONLY;
+			mutex_unlock(&hd_lock);
 			return len;
 		}
 		return -EINVAL;

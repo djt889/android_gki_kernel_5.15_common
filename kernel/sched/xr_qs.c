@@ -1050,6 +1050,7 @@ static int __init xr_qs_init(void)
 
 	ret = register_trace_android_vh_free_task(qs_free_task_hook, NULL);
 	if (ret < 0) {
+		sysfs_remove_group(qs_kobj, &qs_attr_group);
 		kobject_put(qs_kobj);
 		qs_kobj = NULL;
 		pr_err("register free_task hook failed, err:%d\n", ret);
@@ -1059,6 +1060,7 @@ static int __init xr_qs_init(void)
 	ret = register_trace_android_vh_binder_proc_transaction(android_vh_binder_preset, NULL);
 	if (ret < 0) {
 		unregister_trace_android_vh_free_task(qs_free_task_hook, NULL);
+		sysfs_remove_group(qs_kobj, &qs_attr_group);
 		kobject_put(qs_kobj);
 		qs_kobj = NULL;
 		pr_err("register hook failed, err:%d\n", ret);
