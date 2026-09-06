@@ -109,6 +109,19 @@ static ssize_t extra_free_kbytes_store(struct kobject *kobj,
 	if (rc != 3 && rc != 1)
 		return -EINVAL;
 
+	/*
+	 * Match the proc-knob bounds so a bad write cannot corrupt the
+	 * watermark math: min_free_kbytes has a 0 floor (a negative value
+	 * would make pages_min negative in __setup_per_zone_wmarks), and
+	 * watermark_scale_factor is [1, 3000] (kernel/sysctl.c extra1/2).
+	 * The 6.6 original pokes the globals with no such guard; adding it
+	 * here is a deliberate [PORT-DELTA] safety fix.
+	 */
+	if (m != -1 && m < 0)
+		return -EINVAL;
+	if (n != -1 && (n < 1 || n > 3000))
+		return -EINVAL;
+
 	pr_info("extra_free_kbytes_store pid=%d, comm=%s",
 		task_pid_nr(current), current->comm);
 
