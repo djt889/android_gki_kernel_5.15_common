@@ -1003,6 +1003,19 @@ config UNFAIRMEM
 	  sf_pid/scene_tid (bounded), and have slabd skip slab reclaim
 	  for those tasks (single-consumer merge in mm/slabd.c).
 
+config MI_WMARK
+	tristate "Sew mi_wmark: static kswapd watermark rescale"
+	default y
+	help
+	  OS4 mi_wmark port (dada, zhouwenhao): sysfs node
+	  /sys/kernel/mi_wmark/extra_free_kbytes applies delta writes to
+	  min_free_kbytes / watermark_scale_factor and recomputes the
+	  static zone waterlines (kswapd wakeup thresholds), mirroring the
+	  proc knobs.  Built-in required: the touched page_alloc variables
+	  are not exported to modules.  Distinct from the removed
+	  mi_reclaim wmark_boost (per-allocation fast-path raise, livelock
+	  risk) - this moves the waterlines themselves.
+
 config MI_RECLAIM
 	tristate "Sew reclaim-path observability"
 	depends on ANDROID_VENDOR_HOOKS
@@ -1098,3 +1111,8 @@ config PLAT_COMMON
 
 
 endmenu
+
+config MI_WMARK
+	tristate "Sew mi_wmark: static kswapd watermark rescale (dada OS4 port)"
+	depends on ANDROID_VENDOR_HOOKS
+	default n
