@@ -52,12 +52,10 @@
  *  - stats/sysctl/GPU stubs aligned with the dada symbol list
  *
  * PORT-DELTA vs dada (5.15 not supportable, documented not stubbed):
- *  - register_qievent_notifier/unregister_qievent_notifier are NOT
- *    exported here: kernel/sched/xr_qs.c (same tree) already exports
- *    them from its local stand-in chain; a duplicate module export
- *    would create a resolution ambiguity.  xr_qi provides the producer
- *    side (call_qievent_notifiers); the registration face moves here
- *    when xr_qs migrates onto it.
+ *  - register_qievent_notifier/unregister_qievent_notifier are exported
+ *    here (dada names): kernel/sched/xr_qs.c migrated onto this chain,
+ *    dropping its local stand-in.  Load order xr_qi -> xr_qs mirrors
+ *    the dada depends= edge.
  *  - iter_{futex,mutex,rwsem,percpu_rwsem,binder,fuse,qos}_qos_inherit:
  *    in dada these are the per-chain hook callback bodies (addresses
  *    adjacent to the matching qi_vh_*_register).  Here the callbacks
@@ -997,6 +995,18 @@ int call_qievent_notifiers(unsigned long event, void *info)
 					    info);
 }
 EXPORT_SYMBOL_GPL(call_qievent_notifiers);
+
+int register_qievent_notifier(struct notifier_block *nb)
+{
+	return blocking_notifier_chain_register(&sew_qi_qievent_chain, nb);
+}
+EXPORT_SYMBOL_GPL(register_qievent_notifier);
+
+int unregister_qievent_notifier(struct notifier_block *nb)
+{
+	return blocking_notifier_chain_unregister(&sew_qi_qievent_chain, nb);
+}
+EXPORT_SYMBOL_GPL(unregister_qievent_notifier);
 
 /* ---- QoS query family (5.15 stand-ins, dada symbol names) ------------ */
 

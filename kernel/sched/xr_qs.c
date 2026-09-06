@@ -28,7 +28,8 @@
  *     get_proc_static_qos_lvl / is_qos_task / update_static_prio and the
  *     task vendor pad (task+0x12c0, vendor_data_pad for init_task) -> 16
  *     slot per-task state table + static_prio derived level.
- *  3. xr_qi qievent notifier chain (register_qievent_notifier): the 5.15
+ *  3. xr_qi qievent notifier chain (register_qievent_notifier, now
+ *     served by kernel/sched/xr_qi.c after the chain unification): the 5.15
  *     tree's xr_qi.c is a reduced rewrite without the chain -> local
  *     blocking notifier with the same registration contract; events 1..6
  *     have no in-tree producer yet, the speedlock and binder paths below
@@ -115,7 +116,6 @@ static DEFINE_SPINLOCK(qs_state_lock);
 static struct qs_grp qs_grps[QS_NR_GROUPS];
 static DEFINE_SPINLOCK(qs_grp_lock);
 
-static BLOCKING_NOTIFIER_HEAD(qs_qievent_chain);
 
 /* ---- 6.6 QOS-framework stand-ins (closure gap 2) ---------------------- */
 
@@ -712,19 +712,18 @@ static int qievent_callback(struct notifier_block *nb, unsigned long event,
 	}
 }
 
-/* ---- qievent chain (closure gap 3) ------------------------------------- */
+/* ---- qievent chain (closure gap 3, unified) ---------------------------- */
 
-int register_qievent_notifier(struct notifier_block *nb)
-{
-	return blocking_notifier_chain_register(&qs_qievent_chain, nb);
-}
-EXPORT_SYMBOL_GPL(register_qievent_notifier);
-
-int unregister_qievent_notifier(struct notifier_block *nb)
-{
-	return blocking_notifier_chain_unregister(&qs_qievent_chain, nb);
-}
-EXPORT_SYMBOL_GPL(unregister_qievent_notifier);
+/*
+ * The qievent chain lives in xr_qi.c (dada ABI: xr_qi broadcasts, peer
+ * modules register).  This module registers its dispatcher below; the
+ * struct qs_qievent_info layout above is ABI-identical to xr_qi.c's
+ * struct qi_qievent_info (both还原 the dada layout: 2 ptr + 2 int +
+ * 2 uint).  insmod order xr_qi -> xr_qs mirrors the dada depends=
+ * edge; insmod without xr_qi fails on these symbols.
+ */
+extern int register_qievent_notifier(struct notifier_block *nb);
+extern int unregister_qievent_notifier(struct notifier_block *nb);
 
 static struct notifier_block g_qs_nb = {
 	.notifier_call = qievent_callback,
