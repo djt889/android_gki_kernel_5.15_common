@@ -489,6 +489,13 @@ static void enqueue_vip_task(struct rq *rq, struct task_struct *p)
 
 	if (!rq || !p)
 		return;
+	/*
+	 * Audit P0-2: the hook fires for every sched class; only fair
+	 * tasks belong in the vip queue (an RT promotion of a queued vip
+	 * must not re-enter it).
+	 */
+	if (p->prio < MAX_RT_PRIO)
+		return;
 
 	rcu_read_lock();
 	v = vip_task_find_rcu(p);
@@ -996,6 +1003,16 @@ bool vip_sched_replace_next_task_fair(struct rq *rq, struct task_struct **pnext,
 	chosen_v = list_first_entry(&vrq->queue, struct vip_task, queue_node);
 	chosen = chosen_v->task;
 
+	/*
+	 * Audit P0-2: the enqueue/dequeue hooks fire for every sched
+	 * class (core.c enqueue_task/dequeue_task), so a vip task promoted
+	 * to RT/DL by another channel (xr_qs rt channel) must never be
+	 * handed into the CFS pick path - set_next_entity() on a non-CFS
+	 * se corrupts the scheduler.
+	 */
+	if (chosen->prio < MAX_RT_PRIO)
+		return false;
+
 	/* dada BUG chain; skipped when the chosen task is the current one. */
 	if (chosen != prev) {
 		if (chosen->on_cpu == 1 || chosen->on_rq == 0 ||
@@ -1223,7 +1240,18 @@ static int __vip_balance_commit(struct vip_rq *vrq, bool dst_locked)
 	trace_find_emerg_cpu(src_cpu, src_vrq->level, src_vrq->nr_queued);
 
 	src_rq = cpu_rq(src_cpu);
-	raw_spin_lock_irqsave(&src_rq->__lock, flags);
+	/*
+	 * Trylock (audit P0-1): the tick and newidle callers already hold
+	 * their own rq lock while other cpus run the same pull against us,
+	 * so a plain lock can form dst->src / src->dst rq-lock cycles and
+	 * freeze the scheduler.  Migration is best-effort: fail the pull
+	 * instead of waiting.  Returning here also keeps vrq->busy honest
+	 * (audit P0-3 - a stuck busy flag silently kills the pull channel).
+	 */
+	if (!raw_spin_trylock_irqsave(&src_rq->__lock, flags)) {
+		vrq->busy = false;
+		return false;
+	}
 	/* victim = lowest-prio (tail) source vip that may migrate. */
 	list_for_each_entry_reverse(pos, &src_vrq->queue, queue_node) {
 		if (__can_migrate_vip(pos, dst_cpu, src_vrq)) {

@@ -214,6 +214,7 @@ static void sew_qi_wait_start(void *data, u32 flags, u32 bitset)
 {
 	struct task_struct *t = current;
 	unsigned long irqflags;
+	bool reuse = false;
 	int i, slot = -1;
 
 	if (!sew_qi_vip_tgid || task_tgid_nr(t) != sew_qi_vip_tgid)
@@ -233,6 +234,7 @@ static void sew_qi_wait_start(void *data, u32 flags, u32 bitset)
 		if (sew_qi_hints[i].tid == t->pid &&
 		    sew_qi_hints[i].kind == SEW_QI_HINT_FUTEX) {
 			slot = i;
+			reuse = true;
 			break;
 		}
 		if (slot < 0 && sew_qi_hints[i].tid == 0)
@@ -240,12 +242,18 @@ static void sew_qi_wait_start(void *data, u32 flags, u32 bitset)
 	}
 	if (slot >= 0) {
 		sew_qi_hints[slot].tid = t->pid;
-		sew_qi_hints[slot].prev_value =
-			t->uclamp_req[UCLAMP_MIN].value;
+		if (!reuse)
+			/* fresh slot: snapshot the baseline.  On reuse the
+			 * existing baseline is the original pre-boost value;
+			 * re-snapshotting would capture the floor itself
+			 * and the floor would never restore (audit P1). */
+			sew_qi_hints[slot].prev_value =
+				t->uclamp_req[UCLAMP_MIN].value;
 		sew_qi_hints[slot].owner_task = NULL;
 		sew_qi_hints[slot].lock_ptr = NULL;
 		sew_qi_hints[slot].kind = SEW_QI_HINT_FUTEX;
-		atomic_inc(&sew_qi_active_hints);
+		if (!reuse)
+			atomic_inc(&sew_qi_active_hints);
 		/* uclamp_bucket_id() is core.c-static; same mapping inline. */
 		t->uclamp_req[UCLAMP_MIN].value = sew_qi_uclamp_min;
 		t->uclamp_req[UCLAMP_MIN].bucket_id =
@@ -1797,7 +1805,7 @@ static int __init xr_qi_init(void)
 	qi_vh_fuse_register();
 	qi_vh_rcu_register();
 
-	if (!proc_create("xr_qi", 0644, NULL, &sew_qi_proc_ops)) {
+	if (!proc_create("xr_qi", 0600, NULL, &sew_qi_proc_ops)) {
 		ret = -ENOMEM;
 		goto err_proc;
 	}

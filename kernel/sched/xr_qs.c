@@ -53,6 +53,7 @@
 #include <linux/uaccess.h>
 #include <uapi/linux/sched/types.h>
 #include <trace/hooks/binder.h>
+#include <trace/hooks/sched.h>
 #include <trace/hooks/dtask.h>
 
 #define CREATE_TRACE_POINTS
@@ -171,17 +172,39 @@ static struct qs_state_slot *qs_state_get(struct task_struct *p)
 	if (!free_slot)
 		free_slot = old_slot;
 	if (free_slot) {
-		if (free_slot->task && free_slot->task != p)
-			put_task_struct(free_slot->task);
-		if (free_slot->task != p) {
-			get_task_struct(p);
-			free_slot->task = p;
-		}
+		/*
+		 * No task reference is held (same model as rtg.c): the
+		 * android_vh_free_task hook clears dying tasks' slots
+		 * before the SLAB_TYPESAFE_BY_RCU reuse window opens, so
+		 * pointer-identity comparisons stay valid without pinning
+		 * tasks (the get/put here previously pinned VIP-flagged
+		 * dying tasks forever - audit P1).
+		 */
+		free_slot->task = p;
 		free_slot->used = true;
 		free_slot->state = 0;
 	}
 	spin_unlock_irqrestore(&qs_state_lock, irqflags);
 	return free_slot;
+}
+
+/* task lifecycle: clear the dying task's slot before reuse (no refs) */
+static void qs_free_task_hook(void *data, struct task_struct *p)
+{
+	int i;
+	unsigned long irqflags;
+
+	spin_lock_irqsave(&qs_state_lock, irqflags);
+	for (i = 0; i < QS_STATE_SLOTS; i++) {
+		struct qs_state_slot *s = &qs_states[i];
+
+		if (s->used && s->task == p) {
+			s->used = false;
+			s->task = NULL;
+			s->state = 0;
+		}
+	}
+	spin_unlock_irqrestore(&qs_state_lock, irqflags);
 }
 
 /* ---- vip channel (closure gap 1) -------------------------------------- */
@@ -1025,8 +1048,17 @@ static int __init xr_qs_init(void)
 	if (ret)
 		goto err_kobj;
 
+	ret = register_trace_android_vh_free_task(qs_free_task_hook, NULL);
+	if (ret < 0) {
+		kobject_put(qs_kobj);
+		qs_kobj = NULL;
+		pr_err("register free_task hook failed, err:%d\n", ret);
+		return ret;
+	}
+
 	ret = register_trace_android_vh_binder_proc_transaction(android_vh_binder_preset, NULL);
 	if (ret < 0) {
+		unregister_trace_android_vh_free_task(qs_free_task_hook, NULL);
 		kobject_put(qs_kobj);
 		qs_kobj = NULL;
 		pr_err("register hook failed, err:%d\n", ret);

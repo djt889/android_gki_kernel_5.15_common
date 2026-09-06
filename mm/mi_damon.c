@@ -117,8 +117,14 @@ static unsigned int mi_debug_log;	/* >0: verbose aggregation logging */
 
 /* scheme (cold reclaim) config */
 static int mi_action = DAMOS_PAGEOUT;
-static unsigned long mi_cold_max_permil;	/* access-rate ceiling (permil) */
-static unsigned long mi_cold_min_age;		/* in aggregation intervals */
+/* access-rate ceiling (permil): default 50 = a region is "cold" only if
+ * accessed in < 5% of the aggregate-window samples.  The 6.6 module left
+ * this at 0, which on the 5.15 scheme matching means "zero accesses in
+ * the whole window" - with min_age also 0 and the 500-permil free-rate
+ * arming gate that thrashed semi-warm system_server pages through zram
+ * on real devices (UI stalls).  50 permil + a 10-interval age grace. */
+static unsigned long mi_cold_max_permil = 50;
+static unsigned long mi_cold_min_age = 10;	/* in aggregation intervals */
 static unsigned long mi_quota_ms = 100;
 static unsigned long mi_quota_sz = 32UL * 1024 * 1024;
 static unsigned long mi_wmarks_high = 500;	/* free-mem-rate permil */

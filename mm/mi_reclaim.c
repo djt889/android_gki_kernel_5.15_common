@@ -31,12 +31,15 @@
  *      memcgs via try_to_free_mem_cgroup_pages() (EXPORT_SYMBOL_GPL in
  *      this tree).  may_swap=false implements the dada "FILE flag"
  *      (no anon scan => file-only reclaim).
- *   2. wmark boost (android_vh_get_page_wmark): RAISE the fast-path
- *      mark by boost_native_pages for a bounded window after reclaim
- *      stress.  Direction note: unlike unfairmem (which lowers the mark
- *      to let VIPs dip into the reserve), boost RAISES it so reclaim
- *      engages earlier - the dada "wmark boost" intent.  Bounded: at
- *      most +50% of the computed mark, window expires by jiffies.
+ *   2. [REMOVED] wmark boost: the original plan raised the per-
+ *      allocation MIN-watermark check via android_vh_get_page_wmark
+ *      after reclaim stress.  Real-device testing (fuxi freeze: "boots,
+ *      UI stalls, watchdog reboots, stable after 3 reboots") killed it:
+ *      direct reclaim allocates with ALLOC_WMARK_MIN, so +4096 pages on
+ *      the fast-path check stalls every allocation once free sits above
+ *      min by < 16MB, and the stress trigger re-arms forever -> reclaim
+ *      livelock.  Same direction lesson unfairmem already documents;
+ *      the dada module likely targeted a different watermark.
  *   3. throttle bypass (android_vh_throttle_direct_reclaim_bypass):
  *      skip direct-reclaim throttling only while node file pages are
  *      above throttle_file_threshold (plenty of cheap file pages).
@@ -105,11 +108,6 @@ static atomic64_t sew_reclaim_zero_progress;
 #define MIR_FLAG_RECLAIM_ANON	0x2
 static unsigned int mir_enable_flags;
 
-/* wmark boost */
-static unsigned int mir_boost_native_pages;	/* pages added to the mark */
-static unsigned int mir_boost_window_ms = 500;	/* stress window */
-static unsigned long mir_boost_until;		/* jiffies expiry */
-
 /* throttle bypass */
 static unsigned int mir_skip_throttle_enabled;
 static unsigned int mir_throttle_file_threshold; /* node file pages */
@@ -152,11 +150,6 @@ static void mir_slowpath(void *data, gfp_t gfp_mask, unsigned int order)
 	if (order > PAGE_ALLOC_COSTLY_ORDER)
 		atomic64_inc(&sew_slowpath_highorder);
 	*this_cpu_ptr(&mir_slowpath_t0) = local_clock();
-
-	/* stress detector for the wmark boost window */
-	if (mir_boost_native_pages && order > PAGE_ALLOC_COSTLY_ORDER)
-		WRITE_ONCE(mir_boost_until,
-			   jiffies + msecs_to_jiffies(mir_boost_window_ms));
 }
 
 static void mir_reclaim_end(void *data, unsigned long nr_reclaimed)
@@ -169,27 +162,6 @@ static void mir_reclaim_end(void *data, unsigned long nr_reclaimed)
 		atomic64_inc(&sew_reclaim_zero_progress);
 	if (t0)
 		atomic64_add(local_clock() - t0, &mir_total_reclaim_ms);
-}
-
-/*
- * wmark boost: raise the fast-path mark while the stress window is open.
- * Bounded: never above 150% of the computed mark.
- */
-static void mir_wmark_hook(void *data, unsigned int alloc_flags,
-			   unsigned long *page_wmark)
-{
-	unsigned long mark, boosted;
-
-	if (!page_wmark || !mir_boost_native_pages)
-		return;
-	if (time_after(jiffies, READ_ONCE(mir_boost_until)))
-		return;
-
-	mark = *page_wmark;
-	boosted = mark + mir_boost_native_pages;
-	if (boosted > mark + mark / 2)
-		boosted = mark + mark / 2;
-	*page_wmark = boosted;
 }
 
 static void mir_throttle_bypass(void *data, bool *bypass)
@@ -389,7 +361,6 @@ static ssize_t mir_info_show(struct kobject *kobj, struct kobj_attribute *attr,
 		"| zero_progress: %lld\n"
 		"| [Switches]                |\n"
 		"| enable_flags: 0x%x (0x1=RECLAIM_FILE 0x2=RECLAIM_ANON)\n"
-		"| wmark_boost: boost_native_pages=%u window_ms=%u active=%u\n"
 		"| file_scan_enabled: %u fg_file_scan_threshold: %u\n"
 		"| throttle_file_threshold: %u\n"
 		"| important_pids: %d\n",
@@ -405,8 +376,6 @@ static ssize_t mir_info_show(struct kobject *kobj, struct kobj_attribute *attr,
 		atomic64_read(&sew_reclaim_reclaimed_pages),
 		atomic64_read(&sew_reclaim_zero_progress),
 		mir_enable_flags,
-		mir_boost_native_pages, mir_boost_window_ms,
-		time_after(READ_ONCE(mir_boost_until), jiffies) ? 1u : 0u,
 		mir_file_scan_enabled, mir_fg_file_scan_threshold,
 		mir_throttle_file_threshold,
 		mir_pid_count);
@@ -427,13 +396,6 @@ static ssize_t mir_info_store(struct kobject *kobj, struct kobj_attribute *attr,
 	if (!strcmp(key, "enable_flags") && n == 2 && val >= 0 &&
 	    val <= 3) {
 		mir_enable_flags = val;
-	} else if (!strcmp(key, "wmark_boost_native_pages") && n == 2 &&
-		   val >= 0 && val <= 65536) {
-		mir_boost_native_pages = val;
-		if (val)
-			WRITE_ONCE(mir_boost_until,
-				   jiffies +
-				   msecs_to_jiffies(mir_boost_window_ms));
 	} else if (!strcmp(key, "skip_throttle_enabled") && n == 2) {
 		mir_skip_throttle_enabled = !!val;
 	} else if (!strcmp(key, "throttle_file_threshold") && n == 2 &&
@@ -482,7 +444,6 @@ static ssize_t mir_usage_show(struct kobject *kobj,
 		"[info Node Commands]\n"
 		"  cat info - statistics and switches\n"
 		"  echo \"enable_flags <0-3>\" > info\n"
-		"  echo \"wmark_boost_native_pages <pages>\" > info\n"
 		"  echo \"skip_throttle_enabled <0|1>\" > info\n"
 		"  echo \"throttle_file_threshold <pages>\" > info\n"
 		"  echo \"file_scan_enabled <0|1>\" > info\n"
@@ -553,7 +514,6 @@ static void mir_hooks_unregister(void)
 	unregister_trace_android_vh_alloc_pages_slowpath_start(
 		mir_slowpath, NULL);
 	unregister_trace_android_vh_direct_reclaim_end(mir_reclaim_end, NULL);
-	unregister_trace_android_vh_get_page_wmark(mir_wmark_hook, NULL);
 	unregister_trace_android_vh_throttle_direct_reclaim_bypass(
 		mir_throttle_bypass, NULL);
 	unregister_trace_android_vh_tune_scan_type(mir_tune_scan_type, NULL);
@@ -572,13 +532,10 @@ static int __init mi_reclaim_init(void)
 		mir_reclaim_end, NULL);
 	if (ret)
 		goto err_slowpath;
-	ret = register_trace_android_vh_get_page_wmark(mir_wmark_hook, NULL);
-	if (ret)
-		goto err_reclaim_end;
 	ret = register_trace_android_vh_throttle_direct_reclaim_bypass(
 		mir_throttle_bypass, NULL);
 	if (ret)
-		goto err_wmark;
+		goto err_reclaim_end;
 	ret = register_trace_android_vh_tune_scan_type(
 		mir_tune_scan_type, NULL);
 	if (ret)
@@ -617,8 +574,6 @@ err_scan:
 err_throttle:
 	unregister_trace_android_vh_throttle_direct_reclaim_bypass(
 		mir_throttle_bypass, NULL);
-err_wmark:
-	unregister_trace_android_vh_get_page_wmark(mir_wmark_hook, NULL);
 err_reclaim_end:
 	unregister_trace_android_vh_direct_reclaim_end(mir_reclaim_end, NULL);
 err_slowpath:
