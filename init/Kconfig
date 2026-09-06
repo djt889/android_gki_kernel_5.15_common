@@ -851,6 +851,19 @@ config RT_MOD
 	  sits with the Sew family because kernel/sched/ has no Kconfig of
 	  its own.)
 
+config HANGDETECT
+	tristate "Sew OS4 hangdetect (kicker watchdog, ramoops persistence)"
+	depends on ANDROID_VENDOR_HOOKS
+	default n
+	help
+	  Port of the Xiaomi OS4 hangdetect: userspace kicks the misc
+	  device /dev/hangdetect ("start <ms>"/"stop"/"kick"/"whitelist
+	  add|del <comm>"/"action dump|panic"); on kick timeout the
+	  whitelisted processes' threads are dumped via sched_show_task
+	  through printk, persisted by console-ramoops; optional panic
+	  action after repeated dumps. minidump dependency dropped
+	  [PORT-DELTA]; defaults to n.
+
 config SCHED_PENALTY
 	tristate "Sew yield penalty"
 	depends on ANDROID_VENDOR_HOOKS
