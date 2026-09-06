@@ -45,3 +45,4 @@ obj-$(CONFIG_XR_QI) += xr_qi.o
 obj-$(CONFIG_XR_QS) += xr_qs.o
 obj-$(CONFIG_SEW_LAUNCH_BOOST) += sew_launch_boost.o
 obj-$(CONFIG_RTG) += rtg.o
+obj-$(CONFIG_VIP_SCHED) += vip_sched.o

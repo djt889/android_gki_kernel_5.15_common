@@ -907,6 +907,16 @@ config SEW_LAUNCH_BOOST
 	  config sits with the Sew family because kernel/sched/ has no
 	  Kconfig of its own.)
 
+config VIP_SCHED
+	tristate "Sew OS4 VIP scheduler (vip_sched)"
+	depends on ARM64 && PLAT_COMMON && PERF_ACTUATOR && ANDROID_VENDOR_HOOKS
+	default n
+	help
+	  Rewrite of the Xiaomi dada OS4 vip_sched.ko ("MI QOS sched
+	  Driver"): per-task VIP priority with per-cpu queues, wake
+	  placement on idle cpus, CFS pick replacement and IPI-driven
+	  vip migration.  Consumers: xr_qs, mi_game-style modules.
+
 config RTG
 	tristate "Sew OS4 Related Thread Group scheduler (rtg)"
 	depends on ARM64 && PLAT_COMMON && PERF_ACTUATOR && ANDROID_VENDOR_HOOKS
