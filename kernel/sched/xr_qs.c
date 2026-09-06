@@ -270,9 +270,16 @@ static void restore_rt_sched(struct task_struct *p, u32 *state)
 		return;
 	qos = (w >> QS_ST_LVL_SHIFT) & 0xff;
 	saved = (w >> QS_ST_PRIO_SHIFT) & 0xff;
-	policy = qos;
-	if (qos && qos != 3)
+	/* re-apply only real RT policies; anything else (lvl leftovers,
+	 * BATCH, invalid) demotes to NORMAL instead of a silent EINVAL
+	 * no-op that would leave the task stuck in RT (reviewer major 8) */
+	if (qos == SCHED_FIFO || qos == SCHED_RR) {
+		policy = qos;
 		param.sched_priority = 99 - saved;
+	} else {
+		policy = SCHED_NORMAL;
+		param.sched_priority = 0;
+	}
 	sched_setscheduler_nocheck(p, policy & ~SCHED_RESET_ON_FORK, &param);
 	*state = w & 0xff00c03e;
 	trace_qs_restore_rt_sched(p->pid, policy, param.sched_priority);
@@ -320,6 +327,7 @@ static void set_rtg_grp(struct qs_qievent_info *info, u32 *state,
 			unsigned int grp, int force)
 {
 	struct task_struct *task = info->task;
+	struct task_struct *exchanged_old = NULL;
 	struct qs_grp *target = NULL;
 	int orig, ret;
 	int i;
@@ -350,15 +358,20 @@ static void set_rtg_grp(struct qs_qievent_info *info, u32 *state,
 		get_task_struct(task);
 		target->count++;
 	} else if (target && force && target->ui) {
+		struct task_struct *old = target->ui;
+
 		if (orig >= QS_GRP_AI_MIN && orig <= QS_GRP_AI_MAX)
-			exchange_draw_rtg(task, target->ui, orig, grp);
+			exchange_draw_rtg(task, old, orig, grp);
 		else
-			move_existed_draw_rtg(1, target->ui, target);
+			move_existed_draw_rtg(1, old, target);
 		target->ui = task;
 		get_task_struct(task);
 		target->count++;
+		exchanged_old = old;
 	}
 	spin_unlock(&qs_grp_lock);
+	if (exchanged_old)
+		put_task_struct(exchanged_old);
 
 	if (grp <= QS_GRP_AI_MAX && grp >= QS_GRP_AI_MIN)
 		*state |= QS_ST_RTG;
@@ -429,7 +442,13 @@ static void qos_reset_callback(struct qs_qievent_info *info)
 	st->state |= QS_ST_VIP;
 
 	old = task->prio;
-	policy = get_static_qos_lvl(task) | SCHED_RESET_ON_FORK;
+	/* same closed rule as the set path (reviewer major 8): keep the
+	 * current policy when already RT-ish, else SCHED_RR - lvl 4..7
+	 * are invalid policies and made this call fail silently */
+	policy = (task->policy == SCHED_NORMAL ||
+		  task->policy == SCHED_BATCH) ?
+		 SCHED_RR : task->policy;
+	policy |= SCHED_RESET_ON_FORK;
 	param.sched_priority = 99 - old;
 	sched_setscheduler_nocheck(task, policy, &param);
 	st->state |= QS_ST_ACTIVE;
@@ -505,7 +524,9 @@ static void restore_qos_sched(struct qs_qievent_info *info, int mode)
 	if (grp > 5) {
 		if (flags & BIT(4)) {	/* rt restore via flags */
 			int old = task->prio;
-			int lvl = get_static_qos_lvl(task);
+			int lvl = (task->policy == SCHED_NORMAL ||
+				   task->policy == SCHED_BATCH) ?
+				  SCHED_RR : task->policy;
 
 			param.sched_priority = 99 - old;
 			sched_setscheduler_nocheck(task,
@@ -526,6 +547,7 @@ static void restore_qos_sched(struct qs_qievent_info *info, int mode)
 		gid = plat_sched_get_group_id(task);
 		if (gid && (st->state & QS_ST_RTG)) {
 			struct qs_grp *g = NULL;
+			int dropped = 0;
 			int i;
 
 			plat_sched_set_group_id(task, 0);
@@ -542,11 +564,16 @@ static void restore_qos_sched(struct qs_qievent_info *info, int mode)
 				if (!g)
 					goto out_put;
 			} else {
-				g = &qs_grps[0];
+				/* the draw group (id 12) has no scene-table
+				 * slot: the plat group id was already reset
+				 * above, touching qs_grps[0] would clear the
+				 * wrong group (reviewer major 4) */
+				goto out_put;
 			}
 
 			spin_lock(&qs_grp_lock);
 			if (task->prio == task->static_prio) {
+				dropped = (g->ui == task);
 				g->ui = NULL;
 				if (!g->render) {
 					g->enabled = 0;
@@ -556,6 +583,7 @@ static void restore_qos_sched(struct qs_qievent_info *info, int mode)
 				   (task->group_leader &&
 				    !strcmp(task->group_leader->comm,
 					    "RenderThread"))) {
+				dropped = (g->render == task);
 				g->render = NULL;
 				if (!g->ui) {
 					g->enabled = 0;
@@ -563,6 +591,8 @@ static void restore_qos_sched(struct qs_qievent_info *info, int mode)
 				}
 			}
 			spin_unlock(&qs_grp_lock);
+			if (dropped)
+				put_task_struct(task);
 			trace_qs_restore_rtg_grp(task->pid);
 		}
 	}
@@ -623,8 +653,14 @@ static void qos_set_callback(struct qs_qievent_info *info)
 			update_static_prio(task, prio, -1);
 			if (prio <= info->prio)
 				goto rtg;
-			policy = (qos_lvl == 3 || qos_lvl == 0) ?
-				 SCHED_RR : qos_lvl;
+			/* dada stores/keeps the policy: keep the task's
+			 * current policy when it is already RT-ish, else
+			 * promote with SCHED_RR (re-xr-qs.txt csel on
+			 * task->policy; the old lvl-as-policy mapping
+			 * could raise BATCH/invalid policies) */
+			policy = (task->policy == SCHED_NORMAL ||
+				  task->policy == SCHED_BATCH) ?
+				 SCHED_RR : task->policy;
 			param.sched_priority = 99 - info->prio;
 			sched_setscheduler_nocheck(task,
 					policy | SCHED_RESET_ON_FORK, &param);
@@ -643,6 +679,7 @@ static void qs_groups_detach(struct qs_qievent_info *info)
 {
 	struct task_struct *task = info->task;
 	struct qs_grp *g;
+	int dropped = 0;
 	int i;
 
 	spin_lock(&qs_grp_lock);
@@ -652,8 +689,10 @@ static void qs_groups_detach(struct qs_qievent_info *info)
 			continue;
 		if (g->ui == task) {
 			g->ui = NULL;
+			dropped = 1;
 		} else if (g->render == task) {
 			g->render = NULL;
+			dropped = 1;
 		} else {
 			continue;
 		}
@@ -663,6 +702,10 @@ static void qs_groups_detach(struct qs_qievent_info *info)
 		}
 	}
 	spin_unlock(&qs_grp_lock);
+	/* drop the set_rtg_grp reference outside the lock (reviewer
+	 * major 4; put_task_struct may free) */
+	if (dropped)
+		put_task_struct(task);
 }
 
 /* event codes mirror the 6.6 xr_qi qievent numbering:
@@ -718,7 +761,7 @@ static int qievent_callback(struct notifier_block *nb, unsigned long event,
  * The qievent chain lives in xr_qi.c (dada ABI: xr_qi broadcasts, peer
  * modules register).  This module registers its dispatcher below; the
  * struct qs_qievent_info layout above is ABI-identical to xr_qi.c's
- * struct qi_qievent_info (both还原 the dada layout: 2 ptr + 2 int +
+ * struct qi_qievent_info (both restore the dada layout: 2 ptr + 2 int +
  * 2 uint).  insmod order xr_qi -> xr_qs mirrors the dada depends=
  * edge; insmod without xr_qi fails on these symbols.
  */

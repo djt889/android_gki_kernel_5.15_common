@@ -805,7 +805,7 @@ static int rvh_func_add(struct tracepoint *tp, struct tracepoint_func *func)
 		/* '+ 1' for the last NULL element */
 		tp->funcs = rvh_zalloc_funcs(ANDROID_RVH_NR_PROBES_MAX + 1);
 		if (!tp->funcs)
-			return ENOMEM;
+			return -ENOMEM;
 	}
 
 	for (i = 0; i < ANDROID_RVH_NR_PROBES_MAX; i++) {

@@ -224,8 +224,14 @@ static void sew_qi_wait_start(void *data, u32 flags, u32 bitset)
 	 * non-sleeping work happens here (spinlock is fine).
 	 */
 	spin_lock_irqsave(&sew_qi_hint_lock, irqflags);
+	/*
+	 * Kind-filtered search (reviewer major 1): an unfiltered tid
+	 * match would hijack another chain's slot (INHERIT/MWAITER/...),
+	 * flipping its kind and leaking its undo channel.
+	 */
 	for (i = 0; i < SEW_QI_HINT_SLOTS; i++) {
-		if (sew_qi_hints[i].tid == t->pid) {
+		if (sew_qi_hints[i].tid == t->pid &&
+		    sew_qi_hints[i].kind == SEW_QI_HINT_FUTEX) {
 			slot = i;
 			break;
 		}
@@ -827,7 +833,9 @@ static void android_vh_record_pcpu_rwsem_starttime(void *data,
 {
 	if (settime_jiffies)
 		return;
-	sew_qi_mhint_restore(tsk, SEW_QI_HINT_ROWNER);
+	/* PWAITER only (reviewer major 3): the pcpu-rwsem chain never
+	 * creates ROWNER slots, and a blanket restore here would clear a
+	 * plain-rwsem owner floor held by the same task. */
 	sew_qi_mhint_restore(tsk, SEW_QI_HINT_PWAITER);
 }
 
@@ -1140,8 +1148,20 @@ static int sew_qi_api_set(struct task_struct *t, int lvl)
 	for (i = 0; i < SEW_QI_HINT_SLOTS; i++) {
 		if (sew_qi_hints[i].kind == SEW_QI_HINT_INHERIT &&
 		    sew_qi_hints[i].tid == t->pid) {
-			/* refresh in place (idempotent) */
-			sew_qi_mhint_apply_val(&sew_qi_hints[i], t, floor);
+			/* refresh in place (idempotent); keep the FIRST
+			 * baseline - apply_val() snapshots the current
+			 * uclamp as prev_value, which after one apply is
+			 * the floor itself, and overwriting it would make
+			 * undo restore the floor instead of the original
+			 * value (reviewer major 2) */
+			{
+				const unsigned int prev =
+					sew_qi_hints[i].prev_value;
+
+				sew_qi_mhint_apply_val(&sew_qi_hints[i], t,
+						       floor);
+				sew_qi_hints[i].prev_value = prev;
+			}
 			spin_unlock_irqrestore(&sew_qi_hint_lock, irqflags);
 			return 0;
 		}
@@ -1191,6 +1211,13 @@ int kern_qi_set_qos(struct task_struct *t, int qos)
 	return 0;
 }
 EXPORT_SYMBOL_GPL(kern_qi_set_qos);
+/*
+ * Contract (reviewer minor): kern_qi_set_qos/do_qos_inherit/
+ * undo_qos_inherit fan the qievent out through a BLOCKING notifier
+ * chain, whose rwsem read-side is taken before any callback runs - a
+ * preempt_count() guard inside callbacks cannot save an atomic caller.
+ * Callers MUST be in process context (no rq locks, no preempt_disable).
+ */
 
 /*
  * dada do_qos_inherit(from, to, ...): propagate the source's importance

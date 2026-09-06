@@ -99,11 +99,18 @@ static bool hd_whitelisted(const char *comm)
 	return false;
 }
 
-/* dump every thread of every whitelisted process, kernel-side state */
+/* dump every thread of every whitelisted process, kernel-side state.
+ * Tasks are collected under the RCU read lock (bounded by
+ * HD_DUMP_MAX_TASKS) and dumped afterwards: sched_show_task() prints a
+ * large multi-line block per task and must not run inside
+ * rcu_read_lock(), or it stalls the grace period (reviewer minor). */
+#define HD_DUMP_MAX_TASKS	32
 static unsigned int hd_dump_whitelisted(void)
 {
+	struct task_struct *tasks[HD_DUMP_MAX_TASKS];
 	struct task_struct *g, *p;
 	unsigned int dumped = 0;
+	int i, held = 0;
 
 	rcu_read_lock();
 	for_each_process(g) {
@@ -111,11 +118,20 @@ static unsigned int hd_dump_whitelisted(void)
 			continue;
 		p = g;
 		do {
-			sched_show_task(p);
-			dumped++;
+			if (held >= HD_DUMP_MAX_TASKS)
+				goto collected;
+			tasks[held++] = p;
+			get_task_struct(p);
 		} while_each_thread(g, p);
 	}
+collected:
 	rcu_read_unlock();
+
+	for (i = 0; i < held; i++) {
+		sched_show_task(tasks[i]);
+		put_task_struct(tasks[i]);
+		dumped++;
+	}
 	return dumped;
 }
 

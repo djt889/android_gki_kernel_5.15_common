@@ -883,7 +883,7 @@ config XR_QI
 
 config XR_QS
 	tristate "Sew scenarized QOS sched executor (xr_qs port)"
-	depends on ANDROID_VENDOR_HOOKS
+	depends on ANDROID_VENDOR_HOOKS && PLAT_COMMON
 	default n
 	help
 	  OS4 xr_qs port: scenarized QOS scheduling executor ("OS-CPU QOS

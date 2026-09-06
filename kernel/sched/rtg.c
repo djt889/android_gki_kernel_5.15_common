@@ -744,35 +744,65 @@ static int __init rtg_module_init(void)
 		rtg_groups[i].allocated = (i == RTG_DEFAULT_GRP_ID);
 	}
 
-	register_perf_actuator(SET_TASK_RTG, perf_actuator_set_task_rtg);
-	register_perf_actuator(SET_TASK_ARRAY_RTG,
-			       perf_actuator_set_task_array_rtg);
-	register_perf_actuator(SET_RTG_CPUS, perf_actuator_set_rtg_cpus);
-	register_perf_actuator(SET_RTG_UTIL, perf_actuator_set_rtg_util);
-	register_perf_actuator(CLR_RTG, perf_actuator_clear_rtg);
+	ret = register_perf_actuator(SET_TASK_RTG, perf_actuator_set_task_rtg);
+	if (ret)
+		return ret;
+	ret = register_perf_actuator(SET_TASK_ARRAY_RTG,
+				     perf_actuator_set_task_array_rtg);
+	if (ret)
+		goto err_pact0;
+	ret = register_perf_actuator(SET_RTG_CPUS, perf_actuator_set_rtg_cpus);
+	if (ret)
+		goto err_pact1;
+	ret = register_perf_actuator(SET_RTG_UTIL, perf_actuator_set_rtg_util);
+	if (ret)
+		goto err_pact2;
+	ret = register_perf_actuator(CLR_RTG, perf_actuator_clear_rtg);
+	if (ret)
+		goto err_pact3;
 
 	ret = register_plat_func(FUNC_SCHED_SET_GROUP_ID,
 				 rtg_plat_sched_set_group_id);
 	if (ret)
-		return ret;
+		goto err_pact4;
 	ret = register_plat_func(FUNC_GET_GROUP_PREFER_CPUS,
 				 rtg_plat_get_group_prefer_cpus);
 	if (ret)
-		return ret;
+		goto err_pf1;
 	ret = register_plat_func(FUNC_GET_GROUP_PREFER_UTIL,
 				 rtg_plat_get_group_prefer_util);
 	if (ret)
-		return ret;
+		goto err_pf2;
 	ret = register_plat_func(FUNC_LOOKUP_RELATED_THREAD_GROUP,
 				 rtg_plat_lookup_related_thread_group);
 	if (ret)
-		return ret;
+		goto err_pf3;
 
 	ret = register_trace_android_vh_free_task(rtg_free_task_hook, NULL);
 	if (ret)
-		return ret;
+		goto err_pf4;
 
 	return 0;
+
+err_pf4:
+	unregister_plat_func(FUNC_LOOKUP_RELATED_THREAD_GROUP);
+err_pf3:
+	unregister_plat_func(FUNC_GET_GROUP_PREFER_UTIL);
+err_pf2:
+	unregister_plat_func(FUNC_GET_GROUP_PREFER_CPUS);
+err_pf1:
+	unregister_plat_func(FUNC_SCHED_SET_GROUP_ID);
+err_pact4:
+	unregister_perf_actuator(CLR_RTG);
+err_pact3:
+	unregister_perf_actuator(SET_RTG_UTIL);
+err_pact2:
+	unregister_perf_actuator(SET_RTG_CPUS);
+err_pact1:
+	unregister_perf_actuator(SET_TASK_ARRAY_RTG);
+err_pact0:
+	unregister_perf_actuator(SET_TASK_RTG);
+	return ret;
 }
 
 /*

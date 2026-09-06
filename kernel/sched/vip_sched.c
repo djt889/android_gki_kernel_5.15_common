@@ -1573,10 +1573,22 @@ static int __init vip_sched_init(void)
 	if (ret)
 		goto err;
 
+	/*
+	 * DECLARE_RESTRICTED_HOOK probes have no unregister API and
+	 * android_rvh_probe_register() does not pin the module (verified:
+	 * kernel/tracepoint.c:843 has no refcounting), so the module must
+	 * pin itself: without this, rmmod leaves the rq-lock-path probes
+	 * dangling into freed module memory (reviewer blocker 1).
+	 */
+	__module_get(THIS_MODULE);
 	pr_info("vip_sched: MI QOS sched Driver (Sew 5.15 port) ready\n");
 	return 0;
 
 err:
+	unregister_trace_android_vh_free_task(vip_hook_free_task, NULL);
+	unregister_trace_android_vh_scheduler_tick(vip_hook_scheduler_tick,
+						   NULL);
+	tracepoint_synchronize_unregister();
 	unregister_perf_actuator(SET_VIP_WAIT_THRES);
 	unregister_perf_actuator(SET_VIP_PRIO);
 	pr_err("vip_sched: vendor hook registration failed %d\n", ret);
@@ -1590,9 +1602,10 @@ static void __exit vip_sched_exit(void)
 	 * DECLARE_HOOK (android_vh_*) tracepoints generate standard
 	 * unregister helpers; DECLARE_RESTRICTED_HOOK (android_rvh_*)
 	 * vendor hooks cannot be unregistered (vendor_hooks.h: "vendor
-	 * hooks cannot be unregistered") - android_rvh_probe_register()
-	 * pins the module while probes are live, so unload ordering is
-	 * safe without explicit teardown.
+	 * hooks cannot be unregistered") and android_rvh_probe_register()
+	 * does not pin the module - init pins it with __module_get(), so
+	 * this exit is only reachable for the refcount held by module
+	 * removal itself failing; in practice the module stays loaded.
 	 */
 	unregister_trace_android_vh_free_task(vip_hook_free_task, NULL);
 	unregister_trace_android_vh_scheduler_tick(vip_hook_scheduler_tick,
@@ -1600,7 +1613,10 @@ static void __exit vip_sched_exit(void)
 
 	unregister_perf_actuator(SET_VIP_WAIT_THRES);
 	unregister_perf_actuator(SET_VIP_PRIO);
-	synchronize_rcu();
+	/* probe arrays are read under preempt_disable (RCU-sched), the
+	 * pairing API is tracepoint_synchronize_unregister() (reviewer
+	 * major 7; same pattern as rtg/mi_reclaim exits) */
+	tracepoint_synchronize_unregister();
 }
 module_exit(vip_sched_exit);
 
