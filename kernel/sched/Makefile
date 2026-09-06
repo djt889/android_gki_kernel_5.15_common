@@ -42,3 +42,4 @@ obj-$(CONFIG_ANDROID_VENDOR_HOOKS) += vendor_hooks.o
 obj-$(CONFIG_SEW_RTLOAD) += sew_rtload.o
 obj-$(CONFIG_SCHED_YIELD_PENALTY) += sew_yield_penalty.o
 obj-$(CONFIG_SEW_QOS_INHERIT) += sew_qos_inherit.o
+obj-$(CONFIG_SEW_LAUNCH_BOOST) += sew_launch_boost.o
