@@ -42,4 +42,6 @@ obj-$(CONFIG_ANDROID_VENDOR_HOOKS) += vendor_hooks.o
 obj-$(CONFIG_RT_MOD) += rt_mod.o
 obj-$(CONFIG_SCHED_PENALTY) += sched_penalty.o
 obj-$(CONFIG_XR_QI) += xr_qi.o
+obj-$(CONFIG_XR_QS) += xr_qs.o
 obj-$(CONFIG_SEW_LAUNCH_BOOST) += sew_launch_boost.o
+obj-$(CONFIG_RTG) += rtg.o

@@ -34,7 +34,7 @@ static pid_t sew_unfair_scene_tid;
 static unsigned int sew_unfair_relax_pct = 50;
 
 /*
- * VIP check for mm/slabd.c, registered through the sew_slabd_vip_check
+ * VIP check for mm/slabd.c, registered through the slabd_vip_check
  * function pointer (slabd is built-in; direct symbol reference would
  * not link when this is a module).
  */
@@ -139,7 +139,7 @@ static const struct proc_ops sew_unfair_proc_ops = {
 	.proc_write	= sew_unfair_proc_write,
 };
 
-extern bool (*sew_slabd_vip_check)(struct task_struct *t);
+extern bool (*slabd_vip_check)(struct task_struct *t);
 
 static int __init unfair_mem_init(void)
 {
@@ -152,13 +152,13 @@ static int __init unfair_mem_init(void)
 		remove_proc_entry("unfair_mem", NULL);
 		return ret;
 	}
-	WRITE_ONCE(sew_slabd_vip_check, unfair_mem_is_vip);
+	WRITE_ONCE(slabd_vip_check, unfair_mem_is_vip);
 	return 0;
 }
 
 static void __exit unfair_mem_exit(void)
 {
-	WRITE_ONCE(sew_slabd_vip_check, NULL);
+	WRITE_ONCE(slabd_vip_check, NULL);
 	unregister_trace_android_vh_get_page_wmark(sew_unfair_wmark, NULL);
 	tracepoint_synchronize_unregister();
 	remove_proc_entry("unfair_mem", NULL);

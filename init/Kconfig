@@ -868,6 +868,17 @@ config XR_QI
 	  OS4 xr_qi reduced port: uclamp_min hint for futex waiters of a
 	  configured vip tgid. Lock-inheritance on the futex chain only.
 
+config XR_QS
+	tristate "Sew scenarized QOS sched executor (xr_qs port)"
+	depends on ANDROID_VENDOR_HOOKS
+	default n
+	help
+	  OS4 xr_qs port: scenarized QOS scheduling executor ("OS-CPU QOS
+	  sched Driver"). Scene group table with ui/render pairs, RT
+	  scheduling channel, rtg group channel over plat_sched_*, vip
+	  (uclamp floor) channel, speedlock on rwsem read waits and a
+	  binder transaction preset hook.
+
 config SEW_LAUNCH_BOOST
 	bool "Sew launch boost (uclamp floor for zygote forks)"
 	depends on UCLAMP_TASK
@@ -882,6 +893,27 @@ config SEW_LAUNCH_BOOST
 	  (Implementation lives in kernel/sched/sew_launch_boost.c; the
 	  config sits with the Sew family because kernel/sched/ has no
 	  Kconfig of its own.)
+
+config RTG
+	tristate "Sew OS4 Related Thread Group scheduler (rtg)"
+	depends on ARM64 && PLAT_COMMON && PERF_ACTUATOR && ANDROID_VENDOR_HOOKS
+	default n
+	help
+	  Rewrite of the Xiaomi dada OS4 rtg.ko (Related Thread Group).
+	  Keeps the original Xiaomi symbol names (get_related_thread_group,
+	  os_cpu_get_group_prefer_cpus, os_cpu_get_group_prefer_util,
+	  os_cpu_is_task_prefer_cpu, os_cpu_can_migrate_task,
+	  os_cpu_init_rtg_grp_prefer_cpus) and registers the same five
+	  perf_actuator ioctl commands (SET_TASK_RTG 0x40087802,
+	  SET_TASK_ARRAY_RTG 0x40447825, SET_RTG_CPUS 0x40087803,
+	  SET_RTG_UTIL 0x40087804, CLR_RTG 0x40047807).  Since 5.15 has no
+	  walt, this port also owns the group store (20 groups, each with
+	  rtg_prefer_cpus / rtg_util) and the task->group mapping, and
+	  registers plat_common hook slots 1/9/10/12 so
+	  plat_sched_set_group_id() and friends are live.  Say n unless you
+	  port the dada RTG userspace contract.
+	  (Implementation lives in kernel/sched/rtg.c; the config sits with
+	  the Sew family because kernel/sched/ has no Kconfig of its own.)
 
 config UCLAMP_TASK
 	bool "Enable utilization clamping for RT/FAIR tasks"
