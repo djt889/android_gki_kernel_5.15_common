@@ -4,4 +4,7 @@ menu "Xiaomi drivers"
 
 source "drivers/xiaomi/boottime/Kconfig"
 
+source "drivers/xiaomi/millet/Kconfig"
+
 endmenu
+

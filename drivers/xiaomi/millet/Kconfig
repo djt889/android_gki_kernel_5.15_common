@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+config MILLET
+	tristate "Sew millet_core: smart frozen control subsystem (dada OS4 port)"
+	default n
+	help
+	  Port of the Xiaomi dada OS4 millet_core.ko: six tier slots,
+	  uid hash tables (/proc/millet/stat), netlink unit 31 server
+	  (OS4 tier protocol), /proc/millet/{stat,sock,version}, and a
+	  binder-freeze preemption observer re-implemented on the public
+	  android_vh_binder hooks with the in-tree frozen() predicate
+	  (the closed binder_gki exports cannot be ported).  All switches
+	  default off (millet_freeze_switch=0).  Module-only (needs
+	  vendor-conflict review before any built-in): do NOT set =y
+	  while the vendor millet ko may still load.
