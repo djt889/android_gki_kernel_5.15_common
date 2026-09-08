@@ -103,6 +103,10 @@ MODULE_PARM_DESC(millet_debug, "debug verbosity");
 #define MILLET_TIER_NAME_LEN	32
 
 static struct sock *millet_nl_sk;
+/* last userspace peer seen by recv_handler (milletd).  The original
+ * binary hard-codes a unicast target; record the real sender instead
+ * so replies reach the daemon that registered (audit P1). */
+static u32 millet_peer_portid;
 
 /* ---- tier slots (args 1..6, 120B + 32B name) --------------------------- */
 struct millet_tier {
@@ -153,7 +157,20 @@ int core_uid_hash_add(kuid_t uid, unsigned long flags)
 	rec->uid = uid;
 	rec->flags = flags;
 	spin_lock_irqsave(&millet_uid_lock, irqflags);
-	hlist_add_head(&rec->node, &millet_core_uid_hash[bkt]);
+	{
+		struct millet_uid_rec *e;
+
+		/* re-check: a concurrent writer may have inserted first. */
+		hlist_for_each_entry(e, &millet_core_uid_hash[bkt], node) {
+			if (uid_eq(e->uid, uid)) {
+				e->flags = flags;
+				spin_unlock_irqrestore(&millet_uid_lock, irqflags);
+				kfree(rec);
+				return 0;
+			}
+		}
+		hlist_add_head(&rec->node, &millet_core_uid_hash[bkt]);
+	}
 	spin_unlock_irqrestore(&millet_uid_lock, irqflags);
 	return 0;
 }
@@ -202,20 +219,29 @@ EXPORT_SYMBOL_GPL(core_uid_hash_find);
 
 int core_uid_hash_show(struct seq_file *m, void *v)
 {
+	/* seq_printf may sleep (seq buffer grow): snapshot under the
+	 * lock, print after unlock (audit P1). */
+#define MILLET_SHOW_MAX 128
+	struct { u32 uid; unsigned long flags; } snap[MILLET_SHOW_MAX];
 	struct millet_uid_rec *rec;
 	unsigned long irqflags;
-	int i;
+	int i, n = 0;
 
 	spin_lock_irqsave(&millet_uid_lock, irqflags);
-	for (i = 0; i < MILLET_UID_BUCKETS; i++) {
+	for (i = 0; i < MILLET_UID_BUCKETS && n < MILLET_SHOW_MAX; i++) {
 		hlist_for_each_entry(rec, &millet_core_uid_hash[i], node) {
-			seq_printf(m, "uid: %u flags: %lu\n",
-				   from_kuid_munged(&init_user_ns, rec->uid),
-				   rec->flags);
+			if (n >= MILLET_SHOW_MAX)
+				break;
+			snap[n].uid = from_kuid_munged(&init_user_ns, rec->uid);
+			snap[n].flags = rec->flags;
+			n++;
 		}
 	}
 	spin_unlock_irqrestore(&millet_uid_lock, irqflags);
+	for (i = 0; i < n; i++)
+		seq_printf(m, "uid: %u flags: %lu\n", snap[i].uid, snap[i].flags);
 	return 0;
+#undef MILLET_SHOW_MAX
 }
 EXPORT_SYMBOL_GPL(core_uid_hash_show);
 
@@ -259,7 +285,19 @@ int uid_rec_hash_add(kuid_t uid, unsigned long flags)
 	rec->uid = uid;
 	rec->flags = flags;
 	spin_lock_irqsave(&millet_uid_lock, irqflags);
-	hlist_add_head(&rec->node, &millet_uid_rec_hash[bkt]);
+	{
+		struct millet_uid_rec *e;
+
+		hlist_for_each_entry(e, &millet_uid_rec_hash[bkt], node) {
+			if (uid_eq(e->uid, uid)) {
+				e->flags = flags;
+				spin_unlock_irqrestore(&millet_uid_lock, irqflags);
+				kfree(rec);
+				return 0;
+			}
+		}
+		hlist_add_head(&rec->node, &millet_uid_rec_hash[bkt]);
+	}
 	spin_unlock_irqrestore(&millet_uid_lock, irqflags);
 	return 0;
 }
@@ -308,20 +346,28 @@ EXPORT_SYMBOL_GPL(uid_rec_hash_find);
 
 int uid_rec_hash_show(struct seq_file *m, void *v)
 {
+	/* same snapshot discipline as core_uid_hash_show (audit P1). */
+#define MILLET_SHOW_MAX 128
+	struct { u32 uid; unsigned long flags; } snap[MILLET_SHOW_MAX];
 	struct millet_uid_rec *rec;
 	unsigned long irqflags;
-	int i;
+	int i, n = 0;
 
 	spin_lock_irqsave(&millet_uid_lock, irqflags);
-	for (i = 0; i < MILLET_UID_BUCKETS; i++) {
+	for (i = 0; i < MILLET_UID_BUCKETS && n < MILLET_SHOW_MAX; i++) {
 		hlist_for_each_entry(rec, &millet_uid_rec_hash[i], node) {
-			seq_printf(m, "uid: %u flags: %lu\n",
-				   from_kuid_munged(&init_user_ns, rec->uid),
-				   rec->flags);
+			if (n >= MILLET_SHOW_MAX)
+				break;
+			snap[n].uid = from_kuid_munged(&init_user_ns, rec->uid);
+			snap[n].flags = rec->flags;
+			n++;
 		}
 	}
 	spin_unlock_irqrestore(&millet_uid_lock, irqflags);
+	for (i = 0; i < n; i++)
+		seq_printf(m, "uid: %u flags: %lu\n", snap[i].uid, snap[i].flags);
 	return 0;
+#undef MILLET_SHOW_MAX
 }
 EXPORT_SYMBOL_GPL(uid_rec_hash_show);
 
@@ -374,8 +420,10 @@ static void millet_recv_handler(struct sk_buff *skb)
 
 	if (!skb)
 		return;
+	/* netlink cb delivers a full datagram, but a truncated/foreign
+	 * sender must not drive nlmsg_data past the skb (audit P1). */
 	nlh = nlmsg_hdr(skb);
-	if (nlmsg_len(nlh) < sizeof(*msg))
+	if (!nlmsg_ok(nlh, skb->len) || nlmsg_len(nlh) < sizeof(*msg))
 		return;
 	msg = nlmsg_data(nlh);
 	if (msg->magic0 != MILLET_MSG_MAGIC0 ||
@@ -384,8 +432,14 @@ static void millet_recv_handler(struct sk_buff *skb)
 	if (msg->tier < MILLET_TIER_MIN || msg->tier > MILLET_TIER_MAX)
 		return;
 	tier = msg->tier;
+	/* NETLINK_CB(skb).portid is the sender; keep it for replies. */
+	WRITE_ONCE(millet_peer_portid, NETLINK_CB(skb).portid);
 
 	mutex_lock(&millet_tier_lock);
+	if (tier <= MILLET_TIER_MAX) {
+		if (msg->cmd < MILLET_TIER_SIZE)
+			millet_tiers[tier - 1].data[msg->cmd % MILLET_TIER_SIZE]++;
+	}
 	if (millet_debug)
 		pr_info("millet-core: tier %u cmd %u\n", tier, msg->cmd);
 	mutex_unlock(&millet_tier_lock);
@@ -419,7 +473,7 @@ int millet_sendmsg(unsigned int tier, const void *data, unsigned int len)
 	msg->cmd = 0;
 	if (data && len)
 		memcpy(msg->data, data, len);
-	ret = netlink_unicast(millet_nl_sk, skb, 1, MSG_DONTWAIT);
+	ret = netlink_unicast(millet_nl_sk, skb, READ_ONCE(millet_peer_portid), MSG_DONTWAIT);
 	return ret < 0 ? ret : 0;
 }
 EXPORT_SYMBOL_GPL(millet_sendmsg);
@@ -453,7 +507,7 @@ int millet_sendto_user(unsigned int tier, unsigned int cmd,
 	msg->cmd = cmd;
 	if (data && len)
 		memcpy(msg->data, data, len);
-	ret = netlink_unicast(millet_nl_sk, skb, 1, MSG_DONTWAIT);
+	ret = netlink_unicast(millet_nl_sk, skb, READ_ONCE(millet_peer_portid), MSG_DONTWAIT);
 	return ret < 0 ? ret : 0;
 }
 

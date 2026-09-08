@@ -341,6 +341,7 @@ static void sew_qi_mhint_apply_val(struct sew_qi_hint *slot,
 static void sew_qi_mhint_restore(struct task_struct *t, unsigned char kind)
 {
 	unsigned long irqflags;
+	struct task_struct *to_put = NULL;
 	int i;
 
 	if (!atomic_read(&sew_qi_active_hints))
@@ -355,16 +356,24 @@ static void sew_qi_mhint_restore(struct task_struct *t, unsigned char kind)
 		if (h->owner_task) {
 			if (h->owner_task != t)
 				continue;
-			put_task_struct(h->owner_task);
+			/* restore path reuses the same collect-then-put
+			 * discipline: the release runs after the unlock. */
+			t->uclamp_req[UCLAMP_MIN].value = h->prev_value;
+			t->uclamp_req[UCLAMP_MIN].bucket_id =
+				min_t(unsigned int,
+				      h->prev_value / SEW_QI_BUCKET_DELTA,
+				      (unsigned int)(UCLAMP_BUCKETS - 1));
+			to_put = h->owner_task;
 			h->owner_task = NULL;
 		} else if (h->tid != t->pid) {
 			continue;
+		} else {
+			t->uclamp_req[UCLAMP_MIN].value = h->prev_value;
+			t->uclamp_req[UCLAMP_MIN].bucket_id =
+				min_t(unsigned int,
+				      h->prev_value / SEW_QI_BUCKET_DELTA,
+				      (unsigned int)(UCLAMP_BUCKETS - 1));
 		}
-		t->uclamp_req[UCLAMP_MIN].value = h->prev_value;
-		t->uclamp_req[UCLAMP_MIN].bucket_id =
-			min_t(unsigned int,
-			      h->prev_value / SEW_QI_BUCKET_DELTA,
-			      (unsigned int)(UCLAMP_BUCKETS - 1));
 		h->tid = 0;
 		h->lock_ptr = NULL;
 		h->kind = 0;
@@ -372,6 +381,8 @@ static void sew_qi_mhint_restore(struct task_struct *t, unsigned char kind)
 		break;
 	}
 	spin_unlock_irqrestore(&sew_qi_hint_lock, irqflags);
+	if (to_put)
+		put_task_struct(to_put);
 }
 
 /*
@@ -981,9 +992,14 @@ static void sew_qi_dup_task_struct(void *data, struct task_struct *tsk,
 static void sew_qi_purge_task(struct task_struct *p)
 {
 	unsigned long irqflags;
+	struct task_struct *to_put[SEW_QI_HINT_SLOTS];
+	int nput = 0;
 	bool busy;
 	int i;
 
+	/* put_task_struct() may sleep (last ref frees the task), so it
+	 * must not run under sew_qi_hint_lock: collect first, put after
+	 * the unlock (audit P0 - exit_check/free_task context). */
 	spin_lock_irqsave(&sew_qi_hint_lock, irqflags);
 	busy = atomic_read(&sew_qi_active_hints) != 0;
 	for (i = 0; i < SEW_QI_HINT_SLOTS && busy; i++) {
@@ -991,7 +1007,7 @@ static void sew_qi_purge_task(struct task_struct *p)
 		bool hit = false;
 
 		if (h->owner_task == p) {
-			put_task_struct(p);
+			to_put[nput++] = p;
 			h->owner_task = NULL;
 			hit = true;
 		} else if (h->owner_task == NULL && h->tid >= 0 &&
@@ -1010,6 +1026,8 @@ static void sew_qi_purge_task(struct task_struct *p)
 			sew_qi_prio_tbl[i].task = NULL;
 	}
 	spin_unlock_irqrestore(&sew_qi_hint_lock, irqflags);
+	for (i = 0; i < nput; i++)
+		put_task_struct(to_put[i]);
 }
 
 static void sew_qi_exit_check(void *data, struct task_struct *p)

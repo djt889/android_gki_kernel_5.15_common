@@ -247,11 +247,13 @@ static struct proc_dir_entry *lb_proc_dir;
 
 /* ---- package registry -------------------------------------------------- */
 
-static struct lb_pkg *lb_find_pkg(kuid_t uid)
+/* caller must hold lb_lock (registry is spinlock-guarded, not RCU). */
+static struct lb_pkg *lb_find_pkg_locked(kuid_t uid)
 {
 	struct lb_pkg *pkg;
 	unsigned int bkt;
 
+	lockdep_assert_held(&lb_lock);
 	if (!g_manager)
 		return NULL;
 	bkt = from_kuid_munged(&init_user_ns, uid) & LB_UID_HASH_MASK;
@@ -262,6 +264,17 @@ static struct lb_pkg *lb_find_pkg(kuid_t uid)
 	return NULL;
 }
 
+static struct lb_pkg *lb_find_pkg(kuid_t uid)
+{
+	struct lb_pkg *pkg;
+	unsigned long flags;
+
+	spin_lock_irqsave(&lb_lock, flags);
+	pkg = lb_find_pkg_locked(uid);
+	spin_unlock_irqrestore(&lb_lock, flags);
+	return pkg;
+}
+
 static struct lb_pkg *lb_add_package_info(const char *name, kuid_t uid, u8 type)
 {
 	struct lb_pkg *pkg;
@@ -269,17 +282,8 @@ static struct lb_pkg *lb_add_package_info(const char *name, kuid_t uid, u8 type)
 
 	if (!g_manager)
 		return NULL;
-	pkg = lb_find_pkg(uid);
-	if (pkg)
-		return pkg;
-
-	if (type == LB_APP_FILE_SEQUENTIAL &&
-	    g_manager->nr_pkgs[type] >= lb_max_file_sequential_apps)
-		return NULL;
-	if (type == LB_APP_REAL_TIMING &&
-	    g_manager->nr_pkgs[type] >= lb_max_real_timing_apps)
-		return NULL;
-
+	/* alloc outside the lock (kzalloc sleeps); re-check after taking
+	 * it so concurrent adds cannot double-insert (audit P0). */
 	pkg = kzalloc(sizeof(*pkg), GFP_KERNEL);
 	if (!pkg)
 		return NULL;
@@ -287,22 +291,50 @@ static struct lb_pkg *lb_add_package_info(const char *name, kuid_t uid, u8 type)
 	pkg->uid = uid;
 	pkg->type = type;
 	bkt = from_kuid_munged(&init_user_ns, uid) & LB_UID_HASH_MASK;
-	hlist_add_head(&pkg->hnode, &g_manager->pkg_hash[bkt]);
-	g_manager->nr_pkgs[type]++;
+	spin_lock(&lb_lock);
+	{
+		struct lb_pkg *e = lb_find_pkg_locked(uid);
+
+		if (e) {
+			spin_unlock(&lb_lock);
+			kfree(pkg);
+			return e;
+		}
+		if (type == LB_APP_FILE_SEQUENTIAL &&
+		    g_manager->nr_pkgs[type] >= lb_max_file_sequential_apps) {
+			spin_unlock(&lb_lock);
+			kfree(pkg);
+			return NULL;
+		}
+		if (type == LB_APP_REAL_TIMING &&
+		    g_manager->nr_pkgs[type] >= lb_max_real_timing_apps) {
+			spin_unlock(&lb_lock);
+			kfree(pkg);
+			return NULL;
+		}
+		hlist_add_head(&pkg->hnode, &g_manager->pkg_hash[bkt]);
+		g_manager->nr_pkgs[type]++;
+	}
+	spin_unlock(&lb_lock);
 	return pkg;
 }
 
-static void lb_remove_package_info(kuid_t uid)
+static void __maybe_unused lb_remove_package_info(kuid_t uid)
 {
 	struct lb_pkg *pkg;
+	unsigned long flags;
 
 	if (!g_manager)
 		return;
-	pkg = lb_find_pkg(uid);
-	if (!pkg)
+	spin_lock_irqsave(&lb_lock, flags);
+	pkg = lb_find_pkg_locked(uid);
+	if (!pkg) {
+		spin_unlock_irqrestore(&lb_lock, flags);
 		return;
+	}
 	hlist_del(&pkg->hnode);
 	g_manager->nr_pkgs[pkg->type]--;
+	spin_unlock_irqrestore(&lb_lock, flags);
 	kfree(pkg);
 }
 
@@ -381,25 +413,30 @@ static void mi_lb_pagecache_collect(struct file *file, pgoff_t pgoff,
 	if (!m)
 		return;
 
-	/* collect window (5s anchor like the 0x1f4 jiffies check) */
+	/* collect window (5s anchor like the 0x1f4 jiffies check).
+	 * window state and the uid registry both live under lb_lock;
+	 * the registry is spinlock-guarded, not RCU (audit P0). */
+	spin_lock(&lb_lock);
 	if (!m->window_open) {
-		if (time_is_before_jiffies(m->window_j))
+		if (time_is_before_jiffies(m->window_j)) {
+			spin_unlock(&lb_lock);
 			return;
+		}
 	} else if (time_after(jiffies, m->window_j +
 			      LB_COLLECT_WINDOW_JIFFIES)) {
 		m->window_open = false;
 		m->window_j = jiffies;
 	}
 
-	rcu_read_lock();
-	pkg = lb_find_pkg(current_uid());
-	rcu_read_unlock();
-	if (!pkg)
+	pkg = lb_find_pkg_locked(current_uid());
+	if (!pkg) {
+		spin_unlock(&lb_lock);
 		return;
-	if (!lb_file_ok(file))
+	}
+	if (!lb_file_ok(file)) {
+		spin_unlock(&lb_lock);
 		return;
-
-	spin_lock(&lb_lock);
+	}
 	if (fault)
 		atomic64_inc(&m->collect_on_fault);
 	else
@@ -436,9 +473,7 @@ static void mi_lb_skip_async_mmap_readahead(void *data, struct vm_fault *vmf,
 
 	if (!lb_skip_background_readahead_enable || !skip)
 		return;
-	rcu_read_lock();
 	pkg = lb_find_pkg(current_uid());
-	rcu_read_unlock();
 	if (!pkg)
 		return;
 	*skip = true;
@@ -466,10 +501,8 @@ static void should_skip_fault_around(void *data, struct vm_fault *vmf,
 {
 	if (!lb_background_faultaround_disable || !should_around)
 		return;
-	rcu_read_lock();
 	if (!lb_find_pkg(current_uid()))
 		*should_around = false;
-	rcu_read_unlock();
 }
 
 /* ---- preread execution (Tier-1: fadvise over collected ranges) -------- */
@@ -531,19 +564,27 @@ static void lb_preread_ranges(struct lb_manager *m)
 	} while (n == LB_PREREAD_BATCH);
 }
 
+/* detach all ranges under lb_lock, then fput outside: fput may sleep
+ * (last file ref teardown) and must never run under a spinlock
+ * (audit P0). */
 static void lb_drop_ranges(struct lb_manager *m)
 {
-	int i;
+	struct file *files[LB_MAX_OPEN_FILES];
+	int i, n = 0;
 
 	lockdep_assert_held(&lb_lock);
 	for (i = 0; i < LB_MAX_OPEN_FILES; i++) {
 		if (!test_bit(i, m->range_used))
 			continue;
-		fput(m->ranges[i].file);
+		files[n++] = m->ranges[i].file;
 		__clear_bit(i, m->range_used);
 		hlist_del_init(&m->ranges[i].hnode);
 	}
 	m->nr_ranges = 0;
+	spin_unlock(&lb_lock);
+	for (i = 0; i < n; i++)
+		fput(files[i]);
+	spin_lock(&lb_lock);
 }
 
 /* ---- /proc/lb interface (addon contract ASSUME-1/2/3) ------------------ */
@@ -589,18 +630,33 @@ static int lb_collect_list_show(struct seq_file *m, void *v)
 
 	if (!mgr)
 		return 0;
-	rcu_read_lock();
-	for (i = 0; i < LB_HASH_BUCKETS; i++) {
-		hlist_for_each_entry(pkg, &mgr->pkg_hash[i], hnode) {
-			seq_printf(m, "%u %s type=%u mode=%s\n",
-				   from_kuid_munged(&init_user_ns,
-						    pkg->uid),
-				   pkg->name, pkg->type,
-				   pkg->mode_preread ? "preread" :
-						       "collect");
+	/* seq_printf may sleep: snapshot under the lock, print after
+	 * (same discipline as millet show; audit P1). */
+#define LB_SHOW_MAX 64
+	{
+		struct { u32 uid; char name[64]; u8 type; bool preread; } snap[LB_SHOW_MAX];
+		int n = 0, j;
+		unsigned long flags;
+
+		spin_lock_irqsave(&lb_lock, flags);
+		for (i = 0; i < LB_HASH_BUCKETS && n < LB_SHOW_MAX; i++) {
+			hlist_for_each_entry(pkg, &mgr->pkg_hash[i], hnode) {
+				if (n >= LB_SHOW_MAX)
+					break;
+				snap[n].uid = from_kuid_munged(&init_user_ns, pkg->uid);
+				strscpy(snap[n].name, pkg->name, sizeof(snap[n].name));
+				snap[n].type = pkg->type;
+				snap[n].preread = pkg->mode_preread;
+				n++;
+			}
 		}
+		spin_unlock_irqrestore(&lb_lock, flags);
+		for (j = 0; j < n; j++)
+			seq_printf(m, "%u %s type=%u mode=%s\n", snap[j].uid,
+				   snap[j].name, snap[j].type,
+				   snap[j].preread ? "preread" : "collect");
 	}
-	rcu_read_unlock();
+#undef LB_SHOW_MAX
 	return 0;
 }
 
@@ -648,11 +704,10 @@ static ssize_t lb_collect_list_write(struct file *file, const char __user *ubuf,
 	n = sscanf(buf, "%u %63s", &uid, name);
 	if (n != 2)
 		return -EINVAL;
-	spin_lock(&lb_lock);
+	/* lb_add_package_info locks internally (audit P0). */
 	if (!lb_add_package_info(name, make_kuid(&init_user_ns, uid),
 				 LB_APP_FILE_SEQUENTIAL))
 		count = -ENOMEM;
-	spin_unlock(&lb_lock);
 	return count;
 }
 
@@ -683,7 +738,7 @@ static ssize_t lb_mode_write(struct file *file, const char __user *ubuf,
 	if (!uid_valid(uid))
 		return -EINVAL;
 	spin_lock(&lb_lock);
-	pkg = lb_find_pkg(uid);
+	pkg = lb_find_pkg_locked(uid);
 	if (!pkg) {
 		spin_unlock(&lb_lock);
 		return -ENOENT;
@@ -707,7 +762,13 @@ static ssize_t lb_mode_write(struct file *file, const char __user *ubuf,
 	} else if (sysfs_streq(buf, "collect")) {
 		pkg->mode_preread = false;
 	} else if (sysfs_streq(buf, "off")) {
-		lb_remove_package_info(uid);
+		/* inline the removal: the helper locks itself and must
+		 * not be called with lb_lock held (audit P0). */
+		hlist_del(&pkg->hnode);
+		g_manager->nr_pkgs[pkg->type]--;
+		spin_unlock(&lb_lock);
+		kfree(pkg);
+		return count;
 	} else {
 		spin_unlock(&lb_lock);
 		return -EINVAL;

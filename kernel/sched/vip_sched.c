@@ -231,7 +231,7 @@ struct vip_rq {
 	struct list_head		queue;
 	bool				busy;
 	call_single_data_t		csd;
-	u32				kick_pending;
+	unsigned long		kick_pending;
 	u64				last;
 };
 
@@ -1013,13 +1013,23 @@ bool vip_sched_replace_next_task_fair(struct rq *rq, struct task_struct **pnext,
 	if (chosen->prio < MAX_RT_PRIO)
 		return false;
 
-	/* dada BUG chain; skipped when the chosen task is the current one. */
+	/* dada BUG chain; skipped when the chosen task is the current one.
+	 * Never panic on a transient rq state: the queue entry is dropped
+	 * instead, so a stale vip cannot take the machine down (audit P0). */
 	if (chosen != prev) {
 		if (chosen->on_cpu == 1 || chosen->on_rq == 0 ||
-		    task_cpu(chosen) != cpu_of(rq))
-			panic("replace task error, pid=%d, on_cpu=%d, on_rq=%d, task_cpu=%d, cpu=%d",
-			      chosen->pid, chosen->on_cpu, chosen->on_rq,
-			      task_cpu(chosen), cpu_of(rq));
+		    task_cpu(chosen) != cpu_of(rq)) {
+			WARN_ONCE(1,
+				  "vip_sched: stale replace candidate pid=%d on_cpu=%d on_rq=%d task_cpu=%d cpu=%d, dropping\n",
+				  chosen->pid, chosen->on_cpu, chosen->on_rq,
+				  task_cpu(chosen), cpu_of(rq));
+			trace_vip_replace_next_task(chosen, 0, 0, chosen->pid, 0);
+			list_del_init(&chosen_v->queue_node);
+			vrq->nr_queued--;
+			vip_top_prio_update(vrq);
+			atomic_dec(&sys_vip_stats);
+			return false;
+		}
 	}
 
 #ifdef CONFIG_SCHED_DEBUG
@@ -1317,7 +1327,7 @@ static void kick_vip_balance(struct vip_rq *vrq, struct task_struct *p)
 		return;
 
 	target_vrq = per_cpu_ptr(&vip_rq, target);
-	if (test_and_set_bit(0, (unsigned long *)&target_vrq->kick_pending))
+	if (test_and_set_bit(0, &target_vrq->kick_pending))
 		return;
 
 	smp_call_function_single_async(target, &target_vrq->csd);
@@ -1329,7 +1339,7 @@ static void vip_csd_func(void *info)
 {
 	struct vip_rq *vrq = info;
 
-	if (test_and_clear_bit(0, (unsigned long *)&vrq->kick_pending))
+	if (test_and_clear_bit(0, &vrq->kick_pending))
 		vip_balance_commit(vrq);
 }
 

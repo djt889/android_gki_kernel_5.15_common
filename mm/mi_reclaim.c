@@ -188,10 +188,15 @@ static void mir_slowpath(void *data, gfp_t gfp_mask, unsigned int order)
 	    time_after(jiffies, mir_auto_reclaim_last_j +
 		       msecs_to_jiffies(mir_auto_reclaim_interval_ms))) {
 		mir_auto_reclaim_last_j = jiffies;
-		atomic_set(&mir_event_flags, MIR_FLAG_RECLAIM_FILE);
-		atomic_set(&mir_event_mb, (int)mir_auto_reclaim_mb);
-		atomic64_inc(&mir_auto_reclaim_count);
-		wake_up(&mir_waitq);
+		/* worker consumes both atomics with xchg: only arm a new
+		 * event when the previous one was consumed, otherwise a
+		 * manual trigger's flags/mb would be overwritten (audit P1). */
+		if (!atomic_read(&mir_event_mb)) {
+			atomic_set(&mir_event_flags, MIR_FLAG_RECLAIM_FILE);
+			atomic_set(&mir_event_mb, (int)mir_auto_reclaim_mb);
+			atomic64_inc(&mir_auto_reclaim_count);
+			wake_up(&mir_waitq);
+		}
 	}
 }
 
@@ -257,7 +262,18 @@ static unsigned long mir_reclaim_one(struct pid *pid, unsigned long pages,
 		atomic64_inc(&mir_refill_fail_count);
 		return 0;
 	}
+	/* never reclaim exiting tasks or the init/root memcg: freeing
+	 * those pages destabilises the device instead of relieving
+	 * pressure (audit P0). */
+	if (task->flags & PF_EXITING) {
+		put_task_struct(task);
+		return 0;
+	}
 	memcg = mem_cgroup_from_task(task);
+	if (memcg && (memcg == root_mem_cgroup || task->pid == 1)) {
+		put_task_struct(task);
+		return 0;
+	}
 	reclaimed = 0;
 	if (memcg)
 		reclaimed = try_to_free_mem_cgroup_pages(memcg, pages,
