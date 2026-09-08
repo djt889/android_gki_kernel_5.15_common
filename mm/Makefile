@@ -139,6 +139,7 @@ obj-$(CONFIG_MI_RMAP_EFFICIENCY) += mi_rmap_efficiency.o
 obj-$(CONFIG_SEW_MMAP_BYPASS) += sew_mmap_bypass.o
 obj-$(CONFIG_UNFAIRMEM) += unfairmem.o
 obj-$(CONFIG_MI_WMARK) += mi_wmark.o
+obj-$(CONFIG_LB) += lb.o
 obj-$(CONFIG_MI_RECLAIM) += mi_reclaim.o
 obj-$(CONFIG_DYNAMIC_READAHEAD) += dynamic_readahead.o
 obj-$(CONFIG_SEW_ALLOC_ADJUST) += sew_alloc_adjust.o

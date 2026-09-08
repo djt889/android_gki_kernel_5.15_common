@@ -1003,6 +1003,20 @@ config UNFAIRMEM
 	  sf_pid/scene_tid (bounded), and have slabd skip slab reclaim
 	  for those tasks (single-consumer merge in mm/slabd.c).
 
+config LB
+	tristate "Sew lb: iorap launch-boost cold-start prefetch (Tier-1)"
+	default n
+	help
+	  OS4 lb.ko Tier-1 port (dada, iorap): collect file-page ranges
+	  per uid on read/fault (android_vh_filemap_read + filemap_map_
+	  pages + 4 skip/adjust observers), preread them before the next
+	  cold start via vfs_fadvise(POSIX_FADV_WILLNEED), circuit
+	  breakers (swapin/rlock thresholds), /proc/lb/{collect_list,
+	  stats} + /proc/lb/<uid>/mode matching the addon contract.
+	  Tier-2 (PTE-snapshot compiler, anon swapin, hot_collect,
+	  atrace) needs maple tree and stays unported.  All channels
+	  default off; the addon feeds the collect list.
+
 config MI_WMARK
 	tristate "Sew mi_wmark: static kswapd watermark rescale"
 	default y
