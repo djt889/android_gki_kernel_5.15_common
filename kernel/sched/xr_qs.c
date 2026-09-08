@@ -151,7 +151,7 @@ static void update_static_prio(struct task_struct *p, int prio, int flag)
 /* per-task state table, the vendor-pad stand-in */
 static struct qs_state_slot *qs_state_get(struct task_struct *p)
 {
-	struct qs_state_slot *free_slot = NULL, *old_slot = NULL;
+	struct qs_state_slot *free_slot = NULL;
 	unsigned long irqflags;
 	int i;
 
@@ -165,20 +165,16 @@ static struct qs_state_slot *qs_state_get(struct task_struct *p)
 		}
 		if (!s->used && !free_slot)
 			free_slot = s;
-		else if (s->used && !(s->state & (QS_ST_ACTIVE | QS_ST_VIP |
-						  QS_ST_SL)) && !old_slot)
-			old_slot = s;
 	}
-	if (!free_slot)
-		free_slot = old_slot;
+	/* Do not recycle a live slot after dropping qs_state_lock: callers
+	 * retain the pointer while handling the event.  Reuse is only allowed
+	 * after qs_free_task_hook() marks the slot unused. */
 	if (free_slot) {
 		/*
 		 * No task reference is held (same model as rtg.c): the
-		 * android_vh_free_task hook clears dying tasks' slots
-		 * before the SLAB_TYPESAFE_BY_RCU reuse window opens, so
-		 * pointer-identity comparisons stay valid without pinning
-		 * tasks (the get/put here previously pinned VIP-flagged
-		 * dying tasks forever - audit P1).
+		 * android_vh_free_task hook clears dying tasks' slots.  A full
+		 * table now fails closed instead of recycling a live slot and
+		 * redirecting a concurrent event to another task.
 		 */
 		free_slot->task = p;
 		free_slot->used = true;
@@ -186,6 +182,13 @@ static struct qs_state_slot *qs_state_get(struct task_struct *p)
 	}
 	spin_unlock_irqrestore(&qs_state_lock, irqflags);
 	return free_slot;
+}
+
+static bool qs_state_owned_locked(struct qs_state_slot *st,
+					struct task_struct *p)
+{
+	lockdep_assert_held(&qs_state_lock);
+	return st && st->used && st->task == p;
 }
 
 /* task lifecycle: clear the dying task's slot before reuse (no refs) */
@@ -230,6 +233,10 @@ static void set_vip_prio(struct task_struct *p, int prio, int flag)
 		return;
 	val = min_t(unsigned int, (unsigned int)prio * 10, 1024);
 	spin_lock_irqsave(&qs_state_lock, irqflags);
+	if (!qs_state_owned_locked(st, p)) {
+		spin_unlock_irqrestore(&qs_state_lock, irqflags);
+		return;
+	}
 	if (st->state & QS_ST_VIP) {
 		if (val > st->cur_uclamp) {
 			st->cur_uclamp = val;
@@ -254,7 +261,7 @@ static int get_vip_prio(struct task_struct *p)
 	if (!st)
 		return 0;
 	spin_lock_irqsave(&qs_state_lock, irqflags);
-	if (st->state & QS_ST_VIP)
+	if (qs_state_owned_locked(st, p) && (st->state & QS_ST_VIP))
 		prio = st->cur_uclamp / 10;
 	spin_unlock_irqrestore(&qs_state_lock, irqflags);
 	return prio;
@@ -269,7 +276,7 @@ static void restore_vip_prio(struct task_struct *p)
 	if (!st)
 		return;
 	spin_lock_irqsave(&qs_state_lock, irqflags);
-	if (st->state & QS_ST_VIP) {
+	if (qs_state_owned_locked(st, p) && (st->state & QS_ST_VIP)) {
 		qs_uclamp_write(p, st->prev_uclamp);
 		st->state &= ~QS_ST_VIP;
 	}
@@ -316,16 +323,23 @@ static void move_existed_draw_rtg(int which, struct task_struct *task,
 				  struct qs_grp *grp)
 {
 	plat_sched_set_group_id(task, QS_GRP_DRAW);
+	/* Only the member being displaced moves to DRAW.  The other scene
+	 * member remains registered and keeps its reference/count. */
 	if (which & 1) {
-		grp->ui = NULL;
+		if (grp->ui == task) {
+			grp->ui = NULL;
+			if (grp->count)
+				grp->count--;
+		}
+	} else if (grp->render == task) {
 		grp->render = NULL;
-	} else {
-		grp->render = NULL;
-		grp->ui = NULL;
+		if (grp->count)
+			grp->count--;
 	}
-	grp->count = 0;
-	grp->enabled = 0;
-	put_task_struct(task);
+	if (!grp->ui && !grp->render)
+		grp->enabled = 0;
+	/* The caller owns the old group's reference and drops it after
+	 * releasing qs_grp_lock; never put the task in this critical section. */
 }
 
 /* swap the rtg group ids of two tasks; caller holds qs_grp_lock */
@@ -415,8 +429,12 @@ static void correct_qos_sched(struct qs_qievent_info *info)
 	st = qs_state_get(task);
 	if (!st)
 		return;
-	if (!(st->state & QS_ST_ACTIVE))
+	spin_lock(&qs_state_lock);
+	if (!qs_state_owned_locked(st, task) || !(st->state & QS_ST_ACTIVE)) {
+		spin_unlock(&qs_state_lock);
 		return;
+	}
+	spin_unlock(&qs_state_lock);
 	if (get_static_qos_lvl(task) != 3)
 		return;
 	new_prio = 99 - info->prio;
@@ -701,8 +719,9 @@ rtg:
 static void qs_groups_detach(struct qs_qievent_info *info)
 {
 	struct task_struct *task = info->task;
+	struct task_struct *to_put[QS_NR_GROUPS];
 	struct qs_grp *g;
-	int dropped = 0;
+	int nput = 0;
 	int i;
 
 	spin_lock(&qs_grp_lock);
@@ -712,10 +731,14 @@ static void qs_groups_detach(struct qs_qievent_info *info)
 			continue;
 		if (g->ui == task) {
 			g->ui = NULL;
-			dropped = 1;
+			if (g->count)
+				g->count--;
+			to_put[nput++] = task;
 		} else if (g->render == task) {
 			g->render = NULL;
-			dropped = 1;
+			if (g->count)
+				g->count--;
+			to_put[nput++] = task;
 		} else {
 			continue;
 		}
@@ -725,10 +748,10 @@ static void qs_groups_detach(struct qs_qievent_info *info)
 		}
 	}
 	spin_unlock(&qs_grp_lock);
-	/* drop the set_rtg_grp reference outside the lock (reviewer
-	 * major 4; put_task_struct may free) */
-	if (dropped)
-		put_task_struct(task);
+	/* task refs are released after the group lock; the last put can
+	 * tear down the task and must not run in the critical section. */
+	for (i = 0; i < nput; i++)
+		put_task_struct(to_put[i]);
 }
 
 /* event codes mirror the 6.6 xr_qi qievent numbering:

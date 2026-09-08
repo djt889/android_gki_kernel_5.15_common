@@ -319,14 +319,20 @@ static int __init perf_actuator_init(void)
 
 	pr_info("perf_actuator: perf_actuator: init success!\n");
 
-	/* As in the original: xr_fbt failure does not unwind the first device. */
-	return xr_fbt_dev_init();
+	ret = xr_fbt_dev_init();
+	if (ret) {
+		/* The first misc node is already live; unwind it before
+		 * returning failure so a retry cannot inherit stale state. */
+		misc_deregister(&perf_actuator_device);
+		return ret;
+	}
+	return 0;
 }
 
 static void __exit perf_actuator_exit(void)
 {
-	misc_deregister(&perf_actuator_device);
 	xr_fbt_dev_exit();
+	misc_deregister(&perf_actuator_device);
 }
 
 module_init(perf_actuator_init);

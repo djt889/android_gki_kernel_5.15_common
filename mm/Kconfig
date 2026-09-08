@@ -1098,7 +1098,7 @@ config RSS_MONITOR
 
 
 config PERF_ACTUATOR
-	tristate "Sew perf_actuator QoS dispatch bridge (dada OS4 port)"
+	bool "Sew perf_actuator QoS dispatch bridge (dada OS4 port)"
 	default y
 	help
 	  Rewrite of the Xiaomi dada OS4 perf_actuator.ko QoS bridge.
@@ -1110,7 +1110,7 @@ config PERF_ACTUATOR
 	  actuator bridge.
 
 config PLAT_COMMON
-	tristate "Sew OS4 platform hook dispatch library (plat_common)"
+	bool "Sew OS4 platform hook dispatch library (plat_common)"
 	depends on ANDROID_VENDOR_HOOKS
 	default y
 	help

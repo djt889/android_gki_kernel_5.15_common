@@ -908,7 +908,7 @@ config SEW_LAUNCH_BOOST
 	  Kconfig of its own.)
 
 config VIP_SCHED
-	tristate "Sew OS4 VIP scheduler (vip_sched)"
+	bool "Sew OS4 VIP scheduler (vip_sched)"
 	depends on ARM64 && PLAT_COMMON && PERF_ACTUATOR && ANDROID_VENDOR_HOOKS
 	default y
 	help

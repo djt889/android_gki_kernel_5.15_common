@@ -499,17 +499,18 @@ static void enqueue_vip_task(struct rq *rq, struct task_struct *p)
 
 	rcu_read_lock();
 	v = vip_task_find_rcu(p);
-	if (v) {
-		prio = v->vip_prio;
-		/* mirrors the walt "task became runnable" stamp (gap 4). */
-		v->ts_enq = rq->clock;
+	if (!v) {
+		rcu_read_unlock();
+		return;
 	}
-	rcu_read_unlock();
-	if (!prio || !v)
+	prio = v->vip_prio;
+	/* Keep the RCU read side open through every v access: the entry is
+	 * kfree_rcu()'d by free_task and must not escape this scope. */
+	v->ts_enq = rq->clock;
+	if (!prio || !list_empty(&v->queue_node)) {
+		rcu_read_unlock();
 		return;
-
-	if (!list_empty(&v->queue_node))
-		return;
+	}
 
 	list_for_each_entry(pos, &vrq->queue, queue_node) {
 		if (prio > pos->vip_prio)
@@ -522,6 +523,7 @@ static void enqueue_vip_task(struct rq *rq, struct task_struct *p)
 	atomic_inc(&sys_vip_stats);
 
 	trace_queue_vip_task(true, vrq, v->vip_prio, p->pid);
+	rcu_read_unlock();
 }
 
 /*
@@ -539,14 +541,15 @@ static void dequeue_vip_task(struct rq *rq, struct task_struct *p)
 
 	rcu_read_lock();
 	v = vip_task_find_rcu(p);
-	if (v)
-		prio = v->vip_prio;
-	rcu_read_unlock();
-	if (!prio || !v)
+	if (!v) {
+		rcu_read_unlock();
 		return;
-
-	if (list_empty(&v->queue_node))
+	}
+	prio = v->vip_prio;
+	if (!prio || list_empty(&v->queue_node)) {
+		rcu_read_unlock();
 		return;
+	}
 
 	list_del_init(&v->queue_node);
 
@@ -555,6 +558,7 @@ static void dequeue_vip_task(struct rq *rq, struct task_struct *p)
 	atomic_dec(&sys_vip_stats);
 
 	trace_queue_vip_task(false, vrq, vrq->top_prio, p->pid);
+	rcu_read_unlock();
 }
 
 /*
@@ -1600,21 +1604,37 @@ static int __init vip_sched_init(void)
 						      NULL);
 	if (ret)
 		goto err;
-	ret |= register_trace_android_rvh_dequeue_task(vip_hook_dequeue_task,
+	ret = register_trace_android_rvh_dequeue_task(vip_hook_dequeue_task,
 						       NULL);
-	ret |= register_trace_android_rvh_select_task_rq_fair(
+	if (ret)
+		goto err;
+	ret = register_trace_android_rvh_select_task_rq_fair(
 			vip_hook_select_task_rq_fair, NULL);
-	ret |= register_trace_android_rvh_check_preempt_wakeup(
+	if (ret)
+		goto err;
+	ret = register_trace_android_rvh_check_preempt_wakeup(
 			vip_hook_check_preempt_wakeup, NULL);
-	ret |= register_trace_android_rvh_replace_next_task_fair(
+	if (ret)
+		goto err;
+	ret = register_trace_android_rvh_replace_next_task_fair(
 			vip_hook_replace_next_task_fair, NULL);
-	ret |= register_trace_android_rvh_schedule(vip_hook_schedule, NULL);
-	ret |= register_trace_android_vh_scheduler_tick(
+	if (ret)
+		goto err;
+	ret = register_trace_android_rvh_schedule(vip_hook_schedule, NULL);
+	if (ret)
+		goto err;
+	ret = register_trace_android_vh_scheduler_tick(
 			vip_hook_scheduler_tick, NULL);
-	ret |= register_trace_android_rvh_sched_newidle_balance(
+	if (ret)
+		goto err;
+	ret = register_trace_android_rvh_sched_newidle_balance(
 			vip_hook_newidle_balance, NULL);
-	ret |= register_trace_android_vh_free_task(vip_hook_free_task, NULL);
-	ret |= register_trace_android_rvh_finish_prio_fork(
+	if (ret)
+		goto err;
+	ret = register_trace_android_vh_free_task(vip_hook_free_task, NULL);
+	if (ret)
+		goto err;
+	ret = register_trace_android_rvh_finish_prio_fork(
 			vip_hook_finish_prio_fork, NULL);
 	if (ret)
 		goto err;
