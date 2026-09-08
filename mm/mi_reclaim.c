@@ -128,6 +128,20 @@ static unsigned int mir_enable_flags;
 static unsigned int mir_skip_throttle_enabled;
 static unsigned int mir_throttle_file_threshold; /* node file pages */
 
+/* auto reclaim on low free (pool-substitute scheme A):
+ * when a slowpath allocation observes free pages below
+ * mir_auto_reclaim_threshold (pages, 0 = disabled), queue an automatic
+ * file-only reclaim of mir_auto_reclaim_mb over the important pid list.
+ * Throttled to at most one auto event per mir_auto_reclaim_interval_ms.
+ * This recovers the "keep free high so important allocations stay on the
+ * fast path" benefit of the unported page pool without guessing any
+ * binary layout: it reuses the verified event worker + pid list. */
+static unsigned int mir_auto_reclaim_threshold;	/* free pages, 0 = off */
+static unsigned int mir_auto_reclaim_mb = 256;
+static unsigned int mir_auto_reclaim_interval_ms = 60000;
+static unsigned long mir_auto_reclaim_last_j;
+static atomic64_t mir_auto_reclaim_count;
+
 /* scan steer guard */
 static unsigned int mir_file_scan_enabled;
 static unsigned int mir_fg_file_scan_threshold;	/* node file pages */
@@ -166,6 +180,19 @@ static void mir_slowpath(void *data, gfp_t gfp_mask, unsigned int order)
 	if (order > PAGE_ALLOC_COSTLY_ORDER)
 		atomic64_inc(&sew_slowpath_highorder);
 	*this_cpu_ptr(&mir_slowpath_t0) = local_clock();
+
+	/* pool-substitute auto trigger: cheap stat read on the already-slow
+	 * path; the worker does the real work asynchronously. */
+	if (mir_auto_reclaim_threshold && mir_pid_count &&
+	    global_zone_page_state(NR_FREE_PAGES) < mir_auto_reclaim_threshold &&
+	    time_after(jiffies, mir_auto_reclaim_last_j +
+		       msecs_to_jiffies(mir_auto_reclaim_interval_ms))) {
+		mir_auto_reclaim_last_j = jiffies;
+		atomic_set(&mir_event_flags, MIR_FLAG_RECLAIM_FILE);
+		atomic_set(&mir_event_mb, (int)mir_auto_reclaim_mb);
+		atomic64_inc(&mir_auto_reclaim_count);
+		wake_up(&mir_waitq);
+	}
 }
 
 static void mir_reclaim_end(void *data, unsigned long nr_reclaimed)
@@ -380,6 +407,8 @@ static ssize_t mir_info_show(struct kobject *kobj, struct kobj_attribute *attr,
 		"| enable_flags: 0x%x (0x1=RECLAIM_FILE 0x2=RECLAIM_ANON)\n"
 		"| file_scan_enabled: %u fg_file_scan_threshold: %u\n"
 		"| throttle_file_threshold: %u\n"
+		"| auto_reclaim_threshold: %u auto_mb: %u auto_interval_ms: %u\n"
+		"| auto_events: %lld\n"
 		"| important_pids: %d\n",
 		atomic64_read(&mir_reclaim_times),
 		atomic64_read(&mir_total_reclaim_pages),
@@ -395,6 +424,9 @@ static ssize_t mir_info_show(struct kobject *kobj, struct kobj_attribute *attr,
 		mir_enable_flags,
 		mir_file_scan_enabled, mir_fg_file_scan_threshold,
 		mir_throttle_file_threshold,
+		mir_auto_reclaim_threshold, mir_auto_reclaim_mb,
+		mir_auto_reclaim_interval_ms,
+		atomic64_read(&mir_auto_reclaim_count),
 		mir_pid_count);
 	return off;
 }
@@ -423,6 +455,15 @@ static ssize_t mir_info_store(struct kobject *kobj, struct kobj_attribute *attr,
 	} else if (!strcmp(key, "fg_file_scan_threshold") && n == 2 &&
 		   val >= 0) {
 		mir_fg_file_scan_threshold = val;
+	} else if (!strcmp(key, "auto_reclaim_threshold") && n == 2 &&
+		   val >= 0) {
+		mir_auto_reclaim_threshold = val;
+	} else if (!strcmp(key, "auto_reclaim_mb") && n == 2 &&
+		   val > 0 && val <= 4096) {
+		mir_auto_reclaim_mb = val;
+	} else if (!strcmp(key, "auto_reclaim_interval_ms") && n == 2 &&
+		   val >= 1000) {
+		mir_auto_reclaim_interval_ms = val;
 	} else {
 		return -EINVAL;
 	}
@@ -438,6 +479,7 @@ static ssize_t mir_reset_stats_store(struct kobject *kobj,
 	atomic64_set(&mir_reclaim_times, 0);
 	atomic64_set(&mir_refill_fail_count, 0);
 	atomic64_set(&mir_skip_throttle_count, 0);
+	atomic64_set(&mir_auto_reclaim_count, 0);
 	atomic64_set(&sew_slowpath_total, 0);
 	atomic64_set(&sew_slowpath_highorder, 0);
 	atomic64_set(&sew_reclaim_end_calls, 0);
@@ -465,6 +507,9 @@ static ssize_t mir_usage_show(struct kobject *kobj,
 		"  echo \"throttle_file_threshold <pages>\" > info\n"
 		"  echo \"file_scan_enabled <0|1>\" > info\n"
 		"  echo \"fg_file_scan_threshold <pages>\" > info\n"
+		"  echo \"auto_reclaim_threshold <free-pages,0=off>\" > info\n"
+		"  echo \"auto_reclaim_mb <1-4096>\" > info\n"
+		"  echo \"auto_reclaim_interval_ms <>=1000>\" > info\n"
 		"[Other]\n"
 		"  echo 1 > reset_stats\n"
 		"  cat /proc/mi_reclaim       # observe-only counters (legacy)\n");
