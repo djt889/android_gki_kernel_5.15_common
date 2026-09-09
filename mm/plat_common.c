@@ -58,6 +58,18 @@
 #include <linux/rcupdate.h>
 #include <linux/printk.h>
 #include <trace/hooks/sched.h>
+#include <linux/atomic.h>
+
+/* RE-STUB hit guards: slot 8/26/27 keep slot id, others sequential from 16 in file order.
+ * N map: 16 plat_cpu_halted, 17 plat_is_max_possible_cluster_cpu,
+ * 8 plat_find_idle_cpu_in_freq_domain, 18 plat_core_ctl_update,
+ * 19 plat_update_pkg_load, 20 plat_mi_game_walt_get_indicies,
+ * 21 plat_mi_set_next_freq, 22 plat_game_choose_cpu_fastpath,
+ * 26 plat_game_should_skip_cpu_rt, 27 plat_game_should_skip_migrate,
+ * 23 plat_update_frame_load, 24 plat_mi_force_update_freq,
+ * 25 plat_is_relaxed_rt. No proc node in this file, dmesg only via WARN_ONCE.
+ */
+static atomic64_t plat_restub_hits[32];
 
 /*
  * Forward declarations of dada-internal types. plat_common only ever passes
@@ -271,6 +283,8 @@ typedef bool (*plat_cpu_halted_fn_t)(int cpu);
 bool plat_cpu_halted(int cpu)
 {
 	plat_cpu_halted_fn_t fn = plat_hook_fn(FUNC_CPU_HALTED);
+	atomic64_inc(&plat_restub_hits[16]); /* RE-STUB guard N=16 */
+	WARN_ONCE(1, "plat_common RE-STUB %s hit\n", __func__);
 
 	if (fn)
 		return fn(cpu);
@@ -320,6 +334,8 @@ bool plat_is_max_possible_cluster_cpu(int cpu)
 {
 	plat_is_max_possible_cluster_cpu_fn_t fn =
 		plat_hook_fn(FUNC_IS_MAX_POSSIBLE_CLUSTER_CPU);
+	atomic64_inc(&plat_restub_hits[17]); /* RE-STUB guard N=17 */
+	WARN_ONCE(1, "plat_common RE-STUB %s hit\n", __func__);
 
 	if (fn)
 		return fn(cpu);
@@ -333,6 +349,8 @@ int plat_find_idle_cpu_in_freq_domain(struct task_struct *p)
 {
 	plat_find_idle_cpu_in_freq_domain_fn_t fn =
 		plat_hook_fn(FUNC_FIND_IDLE_CPU_IN_FREQ_DOMAIN);
+	atomic64_inc(&plat_restub_hits[8]); /* RE-STUB guard N=8 */
+	WARN_ONCE(1, "plat_common RE-STUB %s hit\n", __func__);
 
 	if (fn)
 		return fn(p);
@@ -385,6 +403,8 @@ typedef void (*plat_core_ctl_update_fn_t)(int cpu);
 void plat_core_ctl_update(int cpu)
 {
 	plat_core_ctl_update_fn_t fn = plat_hook_fn(FUNC_CORE_CTL_UPDATE);
+	atomic64_inc(&plat_restub_hits[18]); /* RE-STUB guard N=18 */
+	WARN_ONCE(1, "plat_common RE-STUB %s hit\n", __func__);
 
 	if (fn)
 		fn(cpu);
@@ -434,6 +454,8 @@ void plat_update_pkg_load(struct task_struct *p, void *arg2, void *arg3,
 			  u64 wallclock, unsigned long arg5)
 {
 	plat_update_pkg_load_fn_t fn = plat_hook_fn(FUNC_MIGT_HOOK);
+	atomic64_inc(&plat_restub_hits[19]); /* RE-STUB guard N=19 */
+	WARN_ONCE(1, "plat_common RE-STUB %s hit\n", __func__);
 
 	if (fn)
 		fn(p, arg2, arg3, wallclock, arg5);
@@ -456,6 +478,8 @@ void plat_mi_game_walt_get_indicies(struct task_struct *p,
 {
 	plat_mi_game_walt_get_indicies_fn_t fn =
 		plat_hook_fn(FUNC_MI_GAME_WALT_GET_INDICIES);
+	atomic64_inc(&plat_restub_hits[20]); /* RE-STUB guard N=20 */
+	WARN_ONCE(1, "plat_common RE-STUB %s hit\n", __func__);
 
 	if (fn)
 		fn(p, order_index, indicies2, num_sched_clusters,
@@ -491,6 +515,8 @@ void plat_mi_set_next_freq(unsigned long a1, unsigned long a2,
 			   unsigned long a7, unsigned long a8)
 {
 	plat_mi_set_next_freq_fn_t fn = plat_hook_fn(FUNC_MI_SET_NEXT_FREQ);
+	atomic64_inc(&plat_restub_hits[21]); /* RE-STUB guard N=21 */
+	WARN_ONCE(1, "plat_common RE-STUB %s hit\n", __func__);
 
 	if (fn)
 		fn(a1, a2, a3, a4, a5, a6, a7, a8);
@@ -534,6 +560,8 @@ int plat_game_choose_cpu_fastpath(struct task_struct *p,
 {
 	plat_game_choose_cpu_fastpath_fn_t fn =
 		plat_hook_fn(FUNC_MI_GAME_CHOOSE_CPU_FASTPATH);
+	atomic64_inc(&plat_restub_hits[22]); /* RE-STUB guard N=22 */
+	WARN_ONCE(1, "plat_common RE-STUB %s hit\n", __func__);
 
 	if (fn)
 		return fn(p, metis_args, should_skip);
@@ -613,6 +641,8 @@ bool plat_game_should_skip_cpu_rt(struct task_struct *p, void *grp)
 {
 	plat_game_should_skip_cpu_rt_fn_t fn =
 		plat_hook_fn(FUNC_MI_GAME_SHOULD_SKIP_CPU_RT);
+	atomic64_inc(&plat_restub_hits[26]); /* RE-STUB guard N=26 */
+	WARN_ONCE(1, "plat_common RE-STUB %s hit\n", __func__);
 
 	if (fn)
 		return fn(p, grp);
@@ -627,6 +657,8 @@ bool plat_game_should_skip_migrate(struct task_struct *p, void *grp)
 {
 	plat_game_should_skip_migrate_fn_t fn =
 		plat_hook_fn(FUNC_MI_GAME_SHOULD_SKIP_MIGRATE);
+	atomic64_inc(&plat_restub_hits[27]); /* RE-STUB guard N=27 */
+	WARN_ONCE(1, "plat_common RE-STUB %s hit\n", __func__);
 
 	if (fn)
 		return fn(p, grp);
@@ -682,6 +714,8 @@ void plat_update_frame_load(struct task_struct *p, void *rq,
 			    unsigned long arg5, void *cl)
 {
 	plat_update_frame_load_fn_t fn = plat_hook_fn(FUNC_UPDATE_FRAME_LOAD);
+	atomic64_inc(&plat_restub_hits[23]); /* RE-STUB guard N=23 */
+	WARN_ONCE(1, "plat_common RE-STUB %s hit\n", __func__);
 
 	if (fn)
 		fn(p, rq, fstat, wallclock, arg5, cl);
@@ -721,6 +755,8 @@ void plat_mi_force_update_freq(struct sched_cluster *cl)
 {
 	plat_mi_force_update_freq_fn_t fn =
 		plat_hook_fn(FUNC_MI_FORCE_UPDATE_FREQ);
+	atomic64_inc(&plat_restub_hits[24]); /* RE-STUB guard N=24 */
+	WARN_ONCE(1, "plat_common RE-STUB %s hit\n", __func__);
 
 	if (fn)
 		fn(cl);
@@ -801,6 +837,8 @@ EXPORT_SYMBOL_GPL(plat_init_sched_cgroup_id);
  */
 int plat_is_relaxed_rt(struct task_struct *p)
 {
+	atomic64_inc(&plat_restub_hits[25]); /* RE-STUB guard N=25 */
+	WARN_ONCE(1, "plat_common RE-STUB %s hit\n", __func__);
 	if (!sched_relaxed)
 		return 0;
 	if (!p)
