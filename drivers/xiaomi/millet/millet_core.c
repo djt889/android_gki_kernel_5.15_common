@@ -107,6 +107,12 @@ static struct sock *millet_nl_sk;
  * binary hard-codes a unicast target; record the real sender instead
  * so replies reach the daemon that registered (audit P1). */
 static u32 millet_peer_portid;
+static DEFINE_SPINLOCK(millet_peer_lock);
+static kuid_t millet_peer_uid;
+static unsigned int millet_peer_changes;
+static atomic64_t millet_drop_spoof;
+static atomic64_t millet_drop_noreg;
+static atomic64_t millet_send_err;
 
 /* ---- tier slots (args 1..6, 120B + 32B name) --------------------------- */
 struct millet_tier {
@@ -432,13 +438,37 @@ static void millet_recv_handler(struct sk_buff *skb)
 	if (msg->tier < MILLET_TIER_MIN || msg->tier > MILLET_TIER_MAX)
 		return;
 	tier = msg->tier;
-	/* NETLINK_CB(skb).portid is the sender; keep it for replies. */
-	WRITE_ONCE(millet_peer_portid, NETLINK_CB(skb).portid);
+	/* Only root or system may register as the reply peer; other
+	 * senders are dropped and counted. */
+	{
+		kuid_t uid = NETLINK_CREDS(skb)->uid;
+		unsigned long irqflags;
+		u32 portid = NETLINK_CB(skb).portid;
+
+		if (!uid_eq(uid, GLOBAL_ROOT_UID) &&
+		    from_kuid_munged(&init_user_ns, uid) != 1000) {
+			atomic64_inc(&millet_drop_spoof);
+			return;
+		}
+		spin_lock_irqsave(&millet_peer_lock, irqflags);
+		if (millet_peer_portid != portid) {
+			millet_peer_portid = portid;
+			millet_peer_uid = uid;
+			millet_peer_changes++;
+			if (millet_debug)
+				pr_info("millet-core: peer %u changes %u\n",
+					millet_peer_portid,
+					millet_peer_changes);
+		}
+		spin_unlock_irqrestore(&millet_peer_lock, irqflags);
+	}
 
 	mutex_lock(&millet_tier_lock);
 	if (tier <= MILLET_TIER_MAX) {
+		/* RE only confirms the tier/cmd field values; the
+		 * histogram bump is a porting inference. */
 		if (msg->cmd < MILLET_TIER_SIZE)
-			millet_tiers[tier - 1].data[msg->cmd % MILLET_TIER_SIZE]++;
+			millet_tiers[tier - 1].data[msg->cmd]++;
 	}
 	if (millet_debug)
 		pr_info("millet-core: tier %u cmd %u\n", tier, msg->cmd);
@@ -451,12 +481,22 @@ int millet_sendmsg(unsigned int tier, const void *data, unsigned int len)
 	struct nlmsghdr *nlh;
 	struct millet_nl_msg *msg;
 	unsigned int size = NLMSG_SPACE(sizeof(*msg) + len);
+	unsigned long irqflags;
+	u32 peer;
 	int ret;
 
 	if (tier < MILLET_TIER_MIN || tier > MILLET_TIER_MAX)
 		return -EINVAL;
 	if (!millet_nl_sk)
 		return -ENODEV;
+
+	spin_lock_irqsave(&millet_peer_lock, irqflags);
+	peer = millet_peer_portid;
+	spin_unlock_irqrestore(&millet_peer_lock, irqflags);
+	if (!peer) {
+		atomic64_inc(&millet_drop_noreg);
+		return -ENOTCONN;
+	}
 
 	skb = alloc_skb(size, GFP_KERNEL);
 	if (!skb)
@@ -473,8 +513,12 @@ int millet_sendmsg(unsigned int tier, const void *data, unsigned int len)
 	msg->cmd = 0;
 	if (data && len)
 		memcpy(msg->data, data, len);
-	ret = netlink_unicast(millet_nl_sk, skb, READ_ONCE(millet_peer_portid), MSG_DONTWAIT);
-	return ret < 0 ? ret : 0;
+	ret = netlink_unicast(millet_nl_sk, skb, peer, MSG_DONTWAIT);
+	if (ret < 0) {
+		atomic64_inc(&millet_send_err);
+		return ret;
+	}
+	return 0;
 }
 EXPORT_SYMBOL_GPL(millet_sendmsg);
 
@@ -485,12 +529,22 @@ int millet_sendto_user(unsigned int tier, unsigned int cmd,
 	struct nlmsghdr *nlh;
 	struct millet_nl_msg *msg;
 	unsigned int size = NLMSG_SPACE(sizeof(*msg) + len);
+	unsigned long irqflags;
+	u32 peer;
 	int ret;
 
 	if (tier < MILLET_TIER_MIN || tier > MILLET_TIER_MAX)
 		return -EINVAL;
 	if (!millet_nl_sk)
 		return -ENODEV;
+
+	spin_lock_irqsave(&millet_peer_lock, irqflags);
+	peer = millet_peer_portid;
+	spin_unlock_irqrestore(&millet_peer_lock, irqflags);
+	if (!peer) {
+		atomic64_inc(&millet_drop_noreg);
+		return -ENOTCONN;
+	}
 
 	skb = alloc_skb(size, GFP_KERNEL);
 	if (!skb)
@@ -507,8 +561,12 @@ int millet_sendto_user(unsigned int tier, unsigned int cmd,
 	msg->cmd = cmd;
 	if (data && len)
 		memcpy(msg->data, data, len);
-	ret = netlink_unicast(millet_nl_sk, skb, READ_ONCE(millet_peer_portid), MSG_DONTWAIT);
-	return ret < 0 ? ret : 0;
+	ret = netlink_unicast(millet_nl_sk, skb, peer, MSG_DONTWAIT);
+	if (ret < 0) {
+		atomic64_inc(&millet_send_err);
+		return ret;
+	}
+	return 0;
 }
 
 /* ---- binder freeze preemption (millet_binder logic, public hooks) ------ */
@@ -580,8 +638,23 @@ static const struct proc_ops millet_stat_fops = {
 
 static int millet_sock_show(struct seq_file *m, void *v)
 {
+	unsigned long irqflags;
+	u32 peer;
+	unsigned int changes;
+
+	spin_lock_irqsave(&millet_peer_lock, irqflags);
+	peer = millet_peer_portid;
+	changes = millet_peer_changes;
+	spin_unlock_irqrestore(&millet_peer_lock, irqflags);
+
 	seq_printf(m, "netlink_unit: %d\nbound: %d\n",
 		   MILLET_NETLINK_UNIT, millet_nl_sk ? 1 : 0);
+	seq_printf(m, "peer_portid: %u\npeer_changes: %u\n",
+		   peer, changes);
+	seq_printf(m, "drop_noreg: %lld\nsend_err: %lld\ndrop_spoof: %lld\n",
+		   atomic64_read(&millet_drop_noreg),
+		   atomic64_read(&millet_send_err),
+		   atomic64_read(&millet_drop_spoof));
 	return 0;
 }
 
