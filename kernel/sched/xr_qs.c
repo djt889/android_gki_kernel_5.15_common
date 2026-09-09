@@ -49,6 +49,9 @@
 #include <linux/sched/rt.h>
 #include <linux/notifier.h>
 #include <linux/spinlock.h>
+#include <linux/atomic.h>
+#include <linux/proc_fs.h>
+#include <linux/seq_file.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
 #include <uapi/linux/sched/types.h>
@@ -113,6 +116,9 @@ static unsigned int g_sl_prio = 5;
 
 static struct qs_state_slot qs_states[QS_STATE_SLOTS];
 static DEFINE_SPINLOCK(qs_state_lock);
+
+static atomic64_t qs_full_drops;
+static atomic64_t qs_owned_mismatch;
 
 static struct qs_grp qs_grps[QS_NR_GROUPS];
 static DEFINE_SPINLOCK(qs_grp_lock);
@@ -179,6 +185,8 @@ static struct qs_state_slot *qs_state_get(struct task_struct *p)
 		free_slot->task = p;
 		free_slot->used = true;
 		free_slot->state = 0;
+	} else {
+		atomic64_inc(&qs_full_drops);
 	}
 	spin_unlock_irqrestore(&qs_state_lock, irqflags);
 	return free_slot;
@@ -424,21 +432,32 @@ static void correct_qos_sched(struct qs_qievent_info *info)
 	struct task_struct *task = info->task;
 	struct qs_state_slot *st;
 	struct sched_param param;
+	unsigned long irqflags;
 	int new_prio;
+	u32 snap;
 
 	st = qs_state_get(task);
 	if (!st)
 		return;
-	spin_lock(&qs_state_lock);
+	spin_lock_irqsave(&qs_state_lock, irqflags);
 	if (!qs_state_owned_locked(st, task) || !(st->state & QS_ST_ACTIVE)) {
-		spin_unlock(&qs_state_lock);
+		atomic64_inc(&qs_owned_mismatch);
+		spin_unlock_irqrestore(&qs_state_lock, irqflags);
 		return;
 	}
-	spin_unlock(&qs_state_lock);
+	snap = st->state;
+	spin_unlock_irqrestore(&qs_state_lock, irqflags);
 	if (get_static_qos_lvl(task) != 3)
 		return;
 	new_prio = 99 - info->prio;
 	param.sched_priority = new_prio;
+	spin_lock_irqsave(&qs_state_lock, irqflags);
+	if (!qs_state_owned_locked(st, task) || st->state != snap) {
+		atomic64_inc(&qs_owned_mismatch);
+		spin_unlock_irqrestore(&qs_state_lock, irqflags);
+		return;
+	}
+	spin_unlock_irqrestore(&qs_state_lock, irqflags);
 	sched_setscheduler_nocheck(task,
 				   SCHED_FIFO | SCHED_RESET_ON_FORK, &param);
 	trace_qs_correct_rt_sched(task->pid, info->prio);
@@ -1059,6 +1078,37 @@ static void sl_exit(void)
 	unregister_trace_android_vh_record_rwsem_lock_starttime(android_vh_rwsem_lock_released, NULL);
 }
 
+/* ---- proc status (read-only, mirrors xr_qi style) ------------------------ */
+
+static int qs_proc_show(struct seq_file *m, void *v)
+{
+	int used = 0;
+	int i;
+	unsigned long irqflags;
+
+	spin_lock_irqsave(&qs_state_lock, irqflags);
+	for (i = 0; i < QS_STATE_SLOTS; i++)
+		if (qs_states[i].used)
+			used++;
+	spin_unlock_irqrestore(&qs_state_lock, irqflags);
+	seq_printf(m, "used_slots=%d\nfull_drops=%lld\nowned_mismatch=%lld\n",
+		   used, atomic64_read(&qs_full_drops),
+		   atomic64_read(&qs_owned_mismatch));
+	return 0;
+}
+
+static int qs_proc_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, qs_proc_show, NULL);
+}
+
+static const struct proc_ops qs_proc_ops = {
+	.proc_open	= qs_proc_open,
+	.proc_read	= seq_read,
+	.proc_lseek	= seq_lseek,
+	.proc_release	= single_release,
+};
+
 static int __init xr_qs_init(void)
 {
 	int ret;
@@ -1105,6 +1155,15 @@ static int __init xr_qs_init(void)
 		goto err_sysfs;
 	}
 
+	if (!proc_create("xr_qs", 0444, NULL, &qs_proc_ops)) {
+		pr_err("proc xr_qs create failed\n");
+		sl_exit();
+		unregister_qievent_notifier(&g_qs_nb);
+		unregister_trace_android_vh_binder_proc_transaction(android_vh_binder_preset, NULL);
+		ret = -ENOMEM;
+		goto err_sysfs;
+	}
+
 	pr_info("qos sched and speed lock probe successfully\n");
 	return 0;
 
@@ -1118,6 +1177,7 @@ err_kobj:
 
 static void __exit xr_qs_exit(void)
 {
+	remove_proc_entry("xr_qs", NULL);
 	sl_exit();
 	unregister_qievent_notifier(&g_qs_nb);
 	unregister_trace_android_vh_binder_proc_transaction(android_vh_binder_preset, NULL);
