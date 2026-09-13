@@ -42,3 +42,14 @@ config QCOM_LMH
 	  input from temperature and current sensors.  On many newer Qualcomm SoCs
 	  LMh is configured in the firmware and this feature need not be enabled.
 	  However, on certain SoCs like sdm845 LMh has to be configured from kernel.
+
+config QCOM_THERMAL_PAUSE
+	bool "Qualcomm Thermal Pause cooling device"
+	depends on OF && THERMAL_OF && SMP && HOTPLUG_CPU
+	default n
+	help
+	  Thermal cooling device that offlines CPUs on over-temperature.
+	  Port of the OS4 thermal_pause driver; the proprietary WALT
+	  pause action is replaced by remove_cpu()/add_cpu(). Configure
+	  its trip point ABOVE the LMH limit trip, otherwise both
+	  mitigations fight and oscillate.
