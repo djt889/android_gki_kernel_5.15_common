@@ -1004,8 +1004,8 @@ config UNFAIRMEM
 	  for those tasks (single-consumer merge in mm/slabd.c).
 
 config LB
-	tristate "Sew lb: iorap launch-boost cold-start prefetch (Tier-1)"
-	default n
+	bool "Sew lb: iorap launch-boost cold-start prefetch (Tier-1)"
+	default y
 	help
 	  OS4 lb.ko Tier-1 port (dada, iorap): collect file-page ranges
 	  per uid on read/fault (android_vh_filemap_read + filemap_map_
