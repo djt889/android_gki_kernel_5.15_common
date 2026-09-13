@@ -140,10 +140,14 @@ obj-$(CONFIG_SEW_MMAP_BYPASS) += sew_mmap_bypass.o
 obj-$(CONFIG_UNFAIRMEM) += unfairmem.o
 obj-$(CONFIG_MI_WMARK) += mi_wmark.o
 obj-$(CONFIG_LB) += lb.o
+# P3 order (K7-FIX-K3 P1-2): scene_swappiness links BEFORE mi_reclaim so
+# its tune_swappiness callback registers first; mi_reclaim is the follower
+# (its passthrough rule relies on running second).  Same device_initcall
+# level => link order decides registration order.  Do NOT reorder.
+obj-$(CONFIG_SCENE_SWAPPINESS) += scene_swappiness.o
 obj-$(CONFIG_MI_RECLAIM) += mi_reclaim.o
 obj-$(CONFIG_DYNAMIC_READAHEAD) += dynamic_readahead.o
 obj-$(CONFIG_SEW_ALLOC_ADJUST) += sew_alloc_adjust.o
-obj-$(CONFIG_SCENE_SWAPPINESS) += scene_swappiness.o
 obj-$(CONFIG_BOOTMONITOR) += bootmonitor.o
 obj-$(CONFIG_RSS_MONITOR) += rss_monitor.o
 obj-$(CONFIG_PERF_ACTUATOR) += perf_actuator.o

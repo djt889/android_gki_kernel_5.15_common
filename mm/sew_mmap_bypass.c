@@ -90,6 +90,12 @@ static void sew_mmap_throttle_bypass(void *data, bool *bypass)
 	if (!sew_task_in_bypass_cpuset(current))
 		return;
 
+	/* LAYER NOTE (L1-FINALIZE K11-K3): co-subscriber with
+	 * sew_mir_throttle_bypass (mm/mi_reclaim.c, default off). Same hook,
+	 * both write-only-true (monotonic OR, chain-safe). This is the
+	 * baseline policy (interactive cpusets always bypass); the mir gate
+	 * adds file-plentiful bypass for non-interactive tasks. Layered by
+	 * design, not a defect. 服务移植优化目标: mmap 缺页延迟旁路. */
 	*bypass = true;
 }
 
