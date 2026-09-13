@@ -220,12 +220,22 @@ static void qs_free_task_hook(void *data, struct task_struct *p)
 
 /* ---- vip channel (closure gap 1) -------------------------------------- */
 
+/* Same divisor as kernel/sched/core.c:1323 UCLAMP_BUCKET_DELTA (static
+ * there, mirrored here as xr_qi.c does with SEW_QI_BUCKET_DELTA).
+ * bucket_id is only a lookup-table index cache of .value: it must be
+ * computed with the same divisor, otherwise the window before core
+ * recomputes the cache reads the wrong bucket (wrong uclamp -> wrong
+ * freq/power decision). */
+#define SEW_QS_UCLAMP_BUCKET_DELTA \
+	DIV_ROUND_CLOSEST(SCHED_CAPACITY_SCALE, UCLAMP_BUCKETS)
+
 #ifdef CONFIG_UCLAMP_TASK
 static void qs_uclamp_write(struct task_struct *p, unsigned int val)
 {
 	p->uclamp_req[UCLAMP_MIN].value = val;
 	p->uclamp_req[UCLAMP_MIN].bucket_id =
-		min_t(unsigned int, val / 16, (unsigned int)(UCLAMP_BUCKETS - 1));
+		min_t(unsigned int, val / SEW_QS_UCLAMP_BUCKET_DELTA,
+		      (unsigned int)(UCLAMP_BUCKETS - 1));
 }
 
 static void set_vip_prio(struct task_struct *p, int prio, int flag)
