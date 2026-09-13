@@ -901,6 +901,18 @@ out_trace:
  * placement for vip tasks.  dada's built-in caller tolerated
  * find_vip_cpu()'s -1 by checking the value before applying it; the
  * check is folded in here.
+ *
+ * Yield rule ([SEW] L1-FINALIZE K1): dada's first instruction is
+ * `bl plat_migt_enable / cbnz -> return` (objdump-verified .text+0x2590),
+ * i.e. "mi_game present => vip_sched stands down". That yield is only
+ * safe when mi_game's own placement face can actually place. Slot 30 now
+ * reports enable && placement_ready (sew_migame_enable_hook): with the
+ * placement face unwired (K10 T1 / K11 #6c) the slot reads 0 even when
+ * the master switch is on, so vip placement stays live (K11-K1 net-loss
+ * closed); once the fair.c call sites land and
+ * sew_migame_placement_ready() flips true, the dada yield is restored
+ * automatically. 三段逻辑: 关=内建 vip 放置生效; 开但放置面未接线=vip 仍
+ * 生效(不白丢); 开且放置面就绪=让位给 mi_game(官方语义).
  */
 void vip_sched_select_task_rq_fair(struct task_struct *p, int prev_cpu,
 				   int sd_flag, int wake_flags, int *new_cpu)

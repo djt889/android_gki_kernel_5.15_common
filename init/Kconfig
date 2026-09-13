@@ -938,6 +938,8 @@ config RTG
 	  (Implementation lives in kernel/sched/rtg.c; the config sits with
 	  the Sew family because kernel/sched/ has no Kconfig of its own.)
 
+source "kernel/sched/xiaomi_sched/qcom/mi_game/Kconfig"
+
 config UCLAMP_TASK
 	bool "Enable utilization clamping for RT/FAIR tasks"
 	depends on CPU_FREQ_GOV_SCHEDUTIL

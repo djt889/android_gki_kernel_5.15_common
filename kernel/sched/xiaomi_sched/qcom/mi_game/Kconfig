@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config MI_GAME
+	tristate "Sew OS4 mi_game game sched accelerator (stage-1 skeleton)"
+	depends on ARM64 && PLAT_COMMON && ANDROID_VENDOR_HOOKS && UCLAMP_TASK
+	default n
+	help
+	  Stage-1 skeleton port of Xiaomi dada OS4 mi_game.ko
+	  (migt-driver/game-load/FLT game scheduling accelerator).
+	  Provides /dev/migt + ioctl dispatch skeleton, proc triple
+	  tree, 17 plat_common providers and 4 RVH probes. Game-load
+	  (stage 2), FLT/PELT (stage 3) and vip/arbitration policy
+	  (stage 4) bodies plug in later. Keep =m for hot iteration
+	  (rmmod/insmod threshold tuning); do not set =y before the
+	  DDR/online stubs of stage 4 are resolved.
