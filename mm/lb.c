@@ -1715,7 +1715,11 @@ static void __exit sew_lb_exit(void)
 /* Built-in: no exit registration; keep sew_lb_exit for code clarity but
  * never register it (matches the "builtin need not register exit"
  * rule while retaining the teardown path for readability). */
-subsys_initcall(sew_lb_init);
+/* device_initcall (NOT subsys_initcall): sew_lb_init() calls proc_mkdir()
+ * and registers vendor-hook tracepoints, both of which must be up first.
+ * subsys_initcall runs before procfs/tracepoint init and made the device
+ * fail to boot. thermal_pause uses device_initcall for the same reason. */
+device_initcall(sew_lb_init);
 #else
 module_init(sew_lb_init);
 module_exit(sew_lb_exit);
