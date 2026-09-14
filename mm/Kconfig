@@ -1126,7 +1126,3 @@ config PLAT_COMMON
 
 endmenu
 
-config MI_WMARK
-	tristate "Sew mi_wmark: static kswapd watermark rescale (dada OS4 port)"
-	depends on ANDROID_VENDOR_HOOKS
-	default n

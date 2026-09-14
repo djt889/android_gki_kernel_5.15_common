@@ -40,6 +40,7 @@
 #include <linux/module.h>
 #include <linux/proc_fs.h>
 #include <linux/sched.h>
+#include <linux/sched/signal.h>
 #include <linux/sched/topology.h>
 #include <linux/sched/task.h>
 #include <linux/seq_file.h>
@@ -92,11 +93,24 @@ MODULE_PARM_DESC(thermal_skip, "Skip boost under severe thermal pressure (defaul
 
 #define SEW_LAUNCH_SLOTS	128
 #define SEW_LAUNCH_MAX_RETRIES	5
+/*
+ * Group-restore bound: uclamp_req is inherited across clone(), so every
+ * thread the boosted leader spawns INSIDE the window is born with the 768
+ * floor. Restoring only the leader would strand those threads at the floor
+ * forever -- the frequency-pinned / battery-drain bug. At window end the
+ * whole live thread group is swept back to the saved value; threads spawned
+ * after the sweep inherit the already-restored leader, so one straggler
+ * re-sweep 750ms later closes the race. Capped: an app spawning more than
+ * this many threads inside the window loses the excess threads' restore
+ * (they die with the process anyway).
+ */
+#define SEW_LAUNCH_GROUP_MAX	48
 
 struct sew_launch_slot {
 	struct task_struct	*task;
 	unsigned int		saved_min;
 	bool			saved_user_defined;
+	bool			swept;
 	int			retries;
 	struct delayed_work	work;
 };
@@ -160,6 +174,46 @@ static bool sew_launch_uclamp_write(struct task_struct *task,
 	return true;
 }
 
+/*
+ * Restore every live thread of the boosted process back to the saved value.
+ * uclamp_req is inherited across clone(), so threads spawned by the leader
+ * INSIDE the boost window are born with the floor; restoring only the
+ * leader would strand them at it for their whole lifetime (the
+ * frequency-pinned / battery-drain bug). Threads that exited meanwhile are
+ * skipped; threads spawned after the sweep inherit the already-restored
+ * leader, which is why one straggler re-sweep is enough to close the race.
+ * Collect references under RCU (atomic), then write outside the RCU-side
+ * -- sched_setattr_nocheck() may sleep, so it must not run under
+ * rcu_read_lock().
+ */
+static void sew_launch_sweep_group(struct task_struct *leader,
+				   unsigned int saved_min,
+				   bool saved_user_defined)
+{
+	struct task_struct *group[SEW_LAUNCH_GROUP_MAX];
+	struct task_struct *t;
+	int n = 0;
+	int i;
+
+	rcu_read_lock();
+	for_each_thread(leader, t) {
+		if (n >= SEW_LAUNCH_GROUP_MAX)
+			break;
+		if (READ_ONCE(t->flags) & PF_EXITING)
+			continue;
+		get_task_struct(t);
+		group[n++] = t;
+	}
+	rcu_read_unlock();
+
+	for (i = 0; i < n; i++) {
+		if (sew_launch_uclamp_write(group[i], saved_min,
+					    saved_user_defined))
+			sew_launch_restores++;
+		put_task_struct(group[i]);
+	}
+}
+
 static void sew_launch_restore(struct work_struct *work)
 {
 	struct sew_launch_slot *slot =
@@ -218,11 +272,28 @@ static void sew_launch_restore(struct work_struct *work)
 		return;
 	}
 
+	sew_launch_restores++;
+
+	/*
+	 * Sweep the whole thread group, then keep the slot for one straggler
+	 * re-sweep 750ms later: threads spawned between the leader's restore
+	 * and the sweep are caught by it, and threads spawned after the sweep
+	 * inherit the already-restored leader. After the second sweep the
+	 * boost lifetime is over and the slot (and reference) is released.
+	 */
+	sew_launch_sweep_group(task, saved_min, saved_user_defined);
+
+	if (!slot->swept) {
+		slot->swept = true;
+		mod_delayed_work(system_wq, &slot->work,
+				 msecs_to_jiffies(750));
+		return;
+	}
+
 	spin_lock_irqsave(&sew_launch_lock, flags);
 	if (slot->task == task)
 		slot->task = NULL;
 	spin_unlock_irqrestore(&sew_launch_lock, flags);
-	sew_launch_restores++;
 	put_task_struct(task);
 }
 
@@ -266,6 +337,7 @@ static void sew_launch_boost_fork(void *unused,
 		slot->saved_user_defined =
 			child->uclamp_req[UCLAMP_MIN].user_defined;
 		slot->retries = 0;
+		slot->swept = false;
 		get_task_struct(child);
 	} else {
 		sew_launch_rejects++;

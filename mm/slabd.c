@@ -361,6 +361,17 @@ static void kshrink_slabd_bypass(void *data, gfp_t gfp_mask, int nid,
 	}
 
 	/*
+	 * R8.1: kswapd is never throttled. Under real memory pressure it
+	 * must keep reclaiming at full native rate; deferring or dropping
+	 * its shrink_slab() call would stall the one thread whose job is
+	 * to relieve that pressure.
+	 */
+	if (current_is_kswapd()) {
+		*bypass = false;
+		return;
+	}
+
+	/*
 	 * Claim the throttle window atomically. Publishing the timestamp
 	 * before deciding (the previous behaviour) let a second CPU read the
 	 * just-written value, compute a near-zero difference and shrink
