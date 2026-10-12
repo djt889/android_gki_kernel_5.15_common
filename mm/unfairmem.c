@@ -41,6 +41,7 @@
 #include <linux/seq_file.h>
 #include <linux/uaccess.h>
 #include <linux/sched.h>
+#include <linux/timer.h>
 #include <trace/hooks/mm.h>
 
 #define SEW_UNFAIRMEM_PID_SLOTS	6
@@ -70,6 +71,35 @@ static struct proc_dir_entry *sew_mimem_rootdir;
  * gives LMKD *less* reason to kill cached apps.
  */
 static int boost_flag = SEW_BOOST_APP_START_EXIT;
+
+/*
+ * Pressure gating (fix 2026-09-24; supersedes the 2026-09-14 kill
+ * switch). Official semantics: the non-VIP x1.125 mark is SCENE-driven
+ * -- the MIUI scene engine writes scene_tid when a scene (app start,
+ * scroll) begins, and the pressure exists only inside that scene. Our
+ * port has no scene engine, so the 2026-09-14 switch just kept the
+ * whole pressure path off (module = VIP relax only, zero heat, zero
+ * scene benefit). Now the write IS the scene: mode 1/2 opens a short
+ * sew_unfair_scene_ms window (default 800ms, launch-shaped) that
+ * pressures non-VIP watermarks to make room for the new scene; mode 0
+ * closes it. With no write the module idles exactly like the switch
+ * build: VIP relax + slabd exemption, no global lift, no churn.
+ *
+ * Manual override survives: pressure=1 forces always-on official
+ * behaviour for anyone who wants to measure the cost.
+ */
+static bool sew_unfair_pressure;
+module_param_named(pressure, sew_unfair_pressure, bool, 0644);
+
+static bool sew_unfair_pressure_win;	/* inside a scene window */
+static unsigned int sew_unfair_scene_ms = 800;
+module_param_named(scene_ms, sew_unfair_scene_ms, uint, 0644);
+
+static void sew_unfair_scene_timer_fn(struct timer_list *t)
+{
+	WRITE_ONCE(sew_unfair_pressure_win, false);
+}
+static struct timer_list sew_unfair_scene_timer;
 
 static pid_t sew_pid_array[SEW_UNFAIRMEM_PID_SLOTS];
 static pid_t sew_msf_pid;
@@ -136,6 +166,10 @@ static void sew_unfair_wmark(void *data, unsigned int alloc_flags,
 		floor = mark - mark * pct / 100;
 		if (out < floor)
 			out = floor;
+	} else if (!READ_ONCE(sew_unfair_pressure) &&
+		   !READ_ONCE(sew_unfair_pressure_win)) {
+		/* No scene, no override (default): non-VIP untouched. */
+		return;
 	} else {
 		/* x1.125: flag 0/>=3, or flag 1/2 with no pid match. */
 		out = mark + (mark >> 3);
@@ -200,6 +234,20 @@ static ssize_t mimem_scene_write(struct file *file, const char __user *buf,
 		/* Mode-only write: stage previous sf pid (see NOTE 1). */
 		WRITE_ONCE(sew_pid_array[0], READ_ONCE(sew_msf_pid));
 	}
+	/*
+	 * DIVERGENCE NOTE 5 (scene-gated pressure): mode 1/2 opens the
+	 * pressure window (new scene needs room; 800ms covers the burst),
+	 * mode 0 closes it immediately (scene over). This is the official
+	 * trigger shape minus the scene engine.
+	 */
+	if (mode == SEW_BOOST_APP_START_EXIT || mode == SEW_BOOST_APP_SCROLL) {
+		WRITE_ONCE(sew_unfair_pressure_win, true);
+		mod_timer(&sew_unfair_scene_timer,
+			  jiffies + msecs_to_jiffies(sew_unfair_scene_ms));
+	} else {
+		WRITE_ONCE(sew_unfair_pressure_win, false);
+		del_timer(&sew_unfair_scene_timer);
+	}
 	return count;
 }
 
@@ -258,9 +306,13 @@ static const struct proc_ops mimem_sf_pid_proc_ops = {
 
 static int sew_unfair_proc_show(struct seq_file *m, void *v)
 {
-	seq_printf(m, "sf_pid=%d\nscene_tid=%d\nrelax_pct=%u\n",
+	seq_printf(m, "sf_pid=%d\nscene_tid=%d\nrelax_pct=%u\npressure=%d\n",
 		   READ_ONCE(sew_msf_pid), READ_ONCE(sew_pid_array[0]),
-		   READ_ONCE(sew_unfair_relax_pct));
+		   READ_ONCE(sew_unfair_relax_pct),
+		   READ_ONCE(sew_unfair_pressure) ? 1 : 0);
+	seq_printf(m, "win=%d\nscene_ms=%u\n",
+		   READ_ONCE(sew_unfair_pressure_win) ? 1 : 0,
+		   READ_ONCE(sew_unfair_scene_ms));
 	return 0;
 }
 
@@ -289,6 +341,8 @@ static ssize_t sew_unfair_proc_write(struct file *file,
 		field = 1;
 	else if (sscanf(tmp, "relax_pct %ld", &val) == 1)
 		field = 2;
+	else if (sscanf(tmp, "pressure %ld", &val) == 1)
+		field = 3;
 	else
 		return -EINVAL;
 
@@ -311,11 +365,20 @@ static ssize_t sew_unfair_proc_write(struct file *file,
 		WRITE_ONCE(sew_pid_array[0], (pid_t)val);
 		if (val && READ_ONCE(boost_flag) == SEW_BOOST_UNDEFINE)
 			WRITE_ONCE(boost_flag, SEW_BOOST_APP_START_EXIT);
+		if (val) {
+			/* Legacy scene write = scene signal (see NOTE 5). */
+			WRITE_ONCE(sew_unfair_pressure_win, true);
+			mod_timer(&sew_unfair_scene_timer,
+				  jiffies + msecs_to_jiffies(sew_unfair_scene_ms));
+		}
 		break;
 	case 2:
 		if (val < 0 || val > 50)
 			return -EINVAL;
 		WRITE_ONCE(sew_unfair_relax_pct, (unsigned int)val);
+		break;
+	case 3:
+		WRITE_ONCE(sew_unfair_pressure, val ? 1 : 0);
 		break;
 	}
 	return count;
@@ -352,6 +415,7 @@ static int __init sew_unfair_mem_init(void)
 		goto err_sf;
 	if (!proc_create("sew_unfairmem", 0644, NULL, &sew_unfair_proc_ops))
 		goto err_legacy;
+	timer_setup(&sew_unfair_scene_timer, sew_unfair_scene_timer_fn, 0);
 	ret = register_trace_android_vh_get_page_wmark(sew_unfair_wmark, NULL);
 	if (ret) {
 		int hook_ret = ret;
@@ -378,6 +442,7 @@ err_dir:
 
 static void __exit sew_unfair_mem_exit(void)
 {
+	del_timer_sync(&sew_unfair_scene_timer);
 	WRITE_ONCE(slabd_vip_check, NULL);
 	unregister_trace_android_vh_get_page_wmark(sew_unfair_wmark, NULL);
 	tracepoint_synchronize_unregister();

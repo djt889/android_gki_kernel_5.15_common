@@ -59,23 +59,24 @@ MODULE_PARM_DESC(enabled, "Enable zygote-fork launch boost (default 1)");
 
 /*
  * uclamp_min floor written onto the fresh process, task-level scale
- * 0..1024. 768 is deliberately above the little cluster's capacity
- * (~460 on this SoC) -- a launch is a short burst, and steering it away
- * from the little cores for its first window is the point -- while
- * staying below SCHED_CAPACITY_SCALE so the floor is a floor, not a
- * max-frequency demand. 0 disables the write entirely.
+ * 0..1024. 512 stays above the little cluster's capacity (~460 on
+ * this SoC) so launches still avoid the little cores, while backing off
+ * from the old 768 -- a launch is a short burst, and the lower floor
+ * buys most of the cold-start win at a fraction of the sustained heat.
+ * 0 disables the write entirely.
  */
-static unsigned int sew_launch_boost_min = 768;
+static unsigned int sew_launch_boost_min = 512;
 module_param_named(boost_min, sew_launch_boost_min, uint, 0644);
 MODULE_PARM_DESC(boost_min, "uclamp_min floor for launched processes, 0..1024 (0 = off)");
 
 /*
  * How long the floor stays, in milliseconds. After the window the
  * pre-boost value is restored and the task goes back to following its
- * cgroup. 2500ms covers process init + first frames of a cold start
- * without spilling into the app's steady state.
+ * cgroup. 1200ms covers process init + the first frames of a cold
+ * start; the old 2500ms spilled into the app's steady state and paid
+ * heat for frames that were already on screen.
  */
-static unsigned int sew_launch_boost_window_ms = 2500;
+static unsigned int sew_launch_boost_window_ms = 1200;
 module_param_named(window_ms, sew_launch_boost_window_ms, uint, 0644);
 MODULE_PARM_DESC(window_ms, "boost window in ms (default 2500)");
 
@@ -112,6 +113,8 @@ struct sew_launch_slot {
 	bool			saved_user_defined;
 	bool			swept;
 	int			retries;
+	/* Floor value this slot actually wrote; restore-side ownership. */
+	unsigned int		written_min;
 	struct delayed_work	work;
 };
 
@@ -125,6 +128,7 @@ static unsigned long sew_launch_rejects;	/* table full */
 static unsigned long sew_launch_retries;	/* restore write failed, re-armed */
 static unsigned long sew_launch_leaked;		/* retries exhausted, boost kept */
 static unsigned long sew_launch_thermal;	/* skipped under thermal pressure */
+static unsigned long sew_launch_vip_holds;	/* restore skipped: floor owned by someone else */
 
 static inline unsigned int sew_launch_hash(const struct task_struct *task)
 {
@@ -188,7 +192,8 @@ static bool sew_launch_uclamp_write(struct task_struct *task,
  */
 static void sew_launch_sweep_group(struct task_struct *leader,
 				   unsigned int saved_min,
-				   bool saved_user_defined)
+				   bool saved_user_defined,
+				   unsigned int written)
 {
 	struct task_struct *group[SEW_LAUNCH_GROUP_MAX];
 	struct task_struct *t;
@@ -207,7 +212,15 @@ static void sew_launch_sweep_group(struct task_struct *leader,
 	rcu_read_unlock();
 
 	for (i = 0; i < n; i++) {
-		if (sew_launch_uclamp_write(group[i], saved_min,
+		/*
+		 * Ownership: only restore threads still carrying the floor this
+		 * slot wrote. If someone else (xr_qi VIP marking the foreground
+		 * app) replaced the floor inside the window, the value is theirs
+		 * -- restoring saved_min would stomp it. The 750ms straggler
+		 * re-sweep also skips the already-restored leader this way.
+		 */
+		if (group[i]->uclamp_req[UCLAMP_MIN].value == written &&
+		    sew_launch_uclamp_write(group[i], saved_min,
 					    saved_user_defined))
 			sew_launch_restores++;
 		put_task_struct(group[i]);
@@ -220,12 +233,14 @@ static void sew_launch_restore(struct work_struct *work)
 		container_of(work, struct sew_launch_slot, work.work);
 	struct task_struct *task;
 	unsigned int saved_min;
+	unsigned int written_min;
 	bool saved_user_defined;
 	unsigned long flags;
 
 	spin_lock_irqsave(&sew_launch_lock, flags);
 	task = slot->task;
 	saved_min = slot->saved_min;
+	written_min = slot->written_min;
 	saved_user_defined = slot->saved_user_defined;
 	spin_unlock_irqrestore(&sew_launch_lock, flags);
 
@@ -245,6 +260,22 @@ static void sew_launch_restore(struct work_struct *work)
 			slot->task = NULL;
 		spin_unlock_irqrestore(&sew_launch_lock, flags);
 		put_task_struct(task);
+		return;
+	}
+
+	/*
+	 * Ownership: if the task no longer carries the floor this slot
+	 * wrote (xr_qi VIP replaced it inside the window), the current
+	 * value belongs to whoever wrote it -- release the slot without
+	 * restoring rather than stomping their value.
+	 */
+	if (task->uclamp_req[UCLAMP_MIN].value != written_min) {
+		spin_lock_irqsave(&sew_launch_lock, flags);
+		if (slot->task == task)
+			slot->task = NULL;
+		spin_unlock_irqrestore(&sew_launch_lock, flags);
+		put_task_struct(task);
+		sew_launch_vip_holds++;
 		return;
 	}
 
@@ -281,7 +312,8 @@ static void sew_launch_restore(struct work_struct *work)
 	 * inherit the already-restored leader. After the second sweep the
 	 * boost lifetime is over and the slot (and reference) is released.
 	 */
-	sew_launch_sweep_group(task, saved_min, saved_user_defined);
+	sew_launch_sweep_group(task, saved_min, saved_user_defined,
+				 written_min);
 
 	if (!slot->swept) {
 		slot->swept = true;
@@ -336,6 +368,7 @@ static void sew_launch_boost_fork(void *unused,
 		slot->saved_min = child->uclamp_req[UCLAMP_MIN].value;
 		slot->saved_user_defined =
 			child->uclamp_req[UCLAMP_MIN].user_defined;
+		slot->written_min = target;
 		slot->retries = 0;
 		slot->swept = false;
 		get_task_struct(child);
@@ -389,6 +422,7 @@ static int sew_launch_proc_show(struct seq_file *m, void *v)
 	seq_printf(m, "retries %lu\n", sew_launch_retries);
 	seq_printf(m, "leaked %lu\n", sew_launch_leaked);
 	seq_printf(m, "thermal_skips %lu\n", sew_launch_thermal);
+	seq_printf(m, "vip_holds %lu\n", sew_launch_vip_holds);
 	return 0;
 }
 
